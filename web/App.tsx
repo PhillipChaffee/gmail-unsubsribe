@@ -96,6 +96,11 @@ export function App() {
     setSelection({});
   }
 
+  /**
+   * Applies one update of the followed job, scan or unsubscribe: progress, pending rows, results, errors.
+   * Task 11 starts its unsubscribe jobs through `follow()` so their updates land here too, rather than
+   * handling them in a second place.
+   */
   async function onJob(j: Job | null): Promise<void> {
     if (!j) {
       setJob(null);
@@ -135,7 +140,11 @@ export function App() {
     follow(started.ok ? started.jobId : started.activeJobId);
   }
 
-  /** Shows the screen for `s`. Signed in: loads the scan, then follows the active job, or starts a scan if there is none. */
+  /**
+   * Shows the screen for `s`. Signed in: loads the scan, then follows the active job, or starts a scan if there is none.
+   * The scan loads even when a job is active (the brief's step 4 reads "else if"): a resumed unsubscribe job marks
+   * its senders pending on these rows, so they must be there first.
+   */
   async function enter(s: StatusResponse, cancelled: () => boolean = () => false): Promise<void> {
     setStatus(s);
     if (!s.configured || !s.signedIn) return;

@@ -38,7 +38,7 @@ export function Header({ email, busy, scanProgress, skipped, restarted, onRescan
       {scanProgress && <ScanProgress progress={scanProgress} />}
       {skipped > 0 && (
         <p className="notice notice-warn" data-testid="skipped-notice">
-          {skipped === 1 ? "1 email couldn't be read" : `${skipped.toLocaleString("en-US")} emails couldn't be read`}
+          {skipped} emails couldn't be read
         </p>
       )}
       {restarted && (
