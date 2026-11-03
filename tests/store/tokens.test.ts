@@ -21,6 +21,12 @@ describe("TokenStore", () => {
     expect(await s.load()).toEqual({ access_token: "b", refresh_token: "r" });
   });
 
+  it("overlapping saves keep refresh_token regardless of order", async () => {
+    const s = new TokenStore(file);
+    await Promise.all([s.save({ access_token: "a", refresh_token: "r" }), s.save({ access_token: "b" })]);
+    expect(await s.load()).toEqual({ access_token: "b", refresh_token: "r" });
+  });
+
   it("file mode is 0600", async () => {
     const s = new TokenStore(file);
     await s.save({ access_token: "a" });
