@@ -263,6 +263,75 @@ describe("unsubscribeSender: cleanup", () => {
     for (const id of ["a", "b", "c", "x"]) expect(labelsOf(id)).not.toContain("TRASH");
   });
 
+  const ACME = "deals@acme.com";
+  const seedAcme = () =>
+    seed(
+      { id: "d1", from: "Deals <deals@acme.com>", daysAgo: 1 },
+      { id: "d2", from: "deals@acme.com", daysAgo: 50 },
+      { id: "d3", from: "Deals <DEALS@acme.com>", daysAgo: 200 },
+      { id: "l1", from: "Hot Deals <hotdeals@acme.com>", daysAgo: 1 },
+    );
+  /** The from: search also returns the lookalike, as Gmail's substring-ish matching can. */
+  const searchIncludesLookalike = () => {
+    const real = gmail.listMessageIds.bind(gmail);
+    vi.spyOn(gmail, "listMessageIds").mockImplementation(async (q) => [...(await real(q)), "l1"]);
+  };
+
+  it("cleanup skips lookalike messages returned by the from: search", async () => {
+    seedAcme();
+    searchIncludesLookalike();
+    const r = await unsubscribeSender(sub(ACME, { oneClickUrl: ONE_CLICK }), "trash", makeDeps());
+
+    expect(r.cleanup).toEqual({ mode: "trash", ok: true, count: 3 });
+    for (const id of ["d1", "d2", "d3"]) expect(labelsOf(id)).toContain("TRASH");
+    expect(labelsOf("l1")).toEqual(["INBOX"]);
+  });
+
+  it("archive path also verifies sender", async () => {
+    seedAcme();
+    searchIncludesLookalike();
+    const r = await unsubscribeSender(sub(ACME, { oneClickUrl: ONE_CLICK }), "archive", makeDeps());
+
+    expect(r.cleanup).toEqual({ mode: "archive", ok: true, count: 3 });
+    for (const id of ["d1", "d2", "d3"]) expect(labelsOf(id)).toEqual([]);
+    expect(labelsOf("l1")).toEqual(["INBOX"]);
+  });
+
+  it("cleanup leaves unverifiable messages in place and reports them", async () => {
+    seedAcme();
+    gmail.failMetadataFor.add("d2");
+    const r = await unsubscribeSender(sub(ACME, { oneClickUrl: ONE_CLICK }), "trash", makeDeps());
+
+    expect(r.outcome).toBe("unsubscribed");
+    expect(r.cleanup).toEqual({ mode: "trash", ok: false, count: 2, error: "1 emails couldn't be checked and were left in place" });
+    expect(labelsOf("d2")).toEqual(["INBOX"]);
+    expect(labelsOf("d1")).toContain("TRASH");
+    expect(labelsOf("d3")).toContain("TRASH");
+  });
+
+  it("no verified messages means neither archive nor trash is called", async () => {
+    seedAcme();
+    searchIncludesLookalike();
+    for (const id of ["d1", "d2", "d3"]) gmail.failMetadataFor.add(id);
+    const archive = vi.spyOn(gmail, "archive");
+    const trash = vi.spyOn(gmail, "trash");
+    const r = await unsubscribeSender(sub(ACME, { oneClickUrl: ONE_CLICK }), "trash", makeDeps());
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(trash).not.toHaveBeenCalled();
+    expect(r.cleanup).toEqual({ mode: "trash", ok: false, count: 0, error: "3 emails couldn't be checked and were left in place" });
+  });
+
+  it("AuthExpiredError during verification aborts the sender", async () => {
+    seedAcme();
+    gmail.failNext = { method: "getMessageMetadata", error: new AuthExpiredError() };
+    const trash = vi.spyOn(gmail, "trash");
+    await expect(unsubscribeSender(sub(ACME, { oneClickUrl: ONE_CLICK }), "trash", makeDeps())).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    expect(trash).not.toHaveBeenCalled();
+  });
+
   it("AuthExpiredError during cleanup propagates after history was written", async () => {
     seedSenderMail();
     gmail.failNext = { method: "archive", error: new AuthExpiredError() };

@@ -1,6 +1,7 @@
 import type { CleanupMode, HistoryEntry, SenderResult, Subscription } from "../../shared/types";
-import { UNSUB_CONCURRENCY } from "../constants";
+import { SCAN_CONCURRENCY, UNSUB_CONCURRENCY } from "../constants";
 import { AuthExpiredError, type GmailClient } from "../gmail/types";
+import { parseFrom } from "../scan/headers";
 import type { HistoryStore } from "../store/history";
 import { mapLimit } from "../util/pool";
 import { sendMailto, type MethodOutcome } from "./methods";
@@ -69,13 +70,41 @@ function historyEntry(a: Attempt, at: number): HistoryEntry {
   }
 }
 
-/** Archives or trashes all of the sender's mail (all time). Only AuthExpiredError escapes. */
+/**
+ * Gmail's from: search can match other senders (lookalikes), so each hit's From header is checked
+ * against the exact address. Messages whose metadata can't be read are counted, not touched.
+ * AuthExpiredError propagates once the pool has settled.
+ */
+async function verifiedSenderIds(sender: string, ids: string[], gmail: GmailClient): Promise<{ verified: string[]; unchecked: number }> {
+  const settled = await mapLimit(ids, SCAN_CONCURRENCY, async (id) => {
+    const meta = await gmail.getMessageMetadata(id);
+    return parseFrom(meta.headers["from"]?.[0])?.address === sender;
+  });
+  const verified: string[] = [];
+  let unchecked = 0;
+  let authError: AuthExpiredError | undefined;
+  settled.forEach((s, i) => {
+    if (s.status === "fulfilled") {
+      if (s.value) verified.push(ids[i]!);
+    } else if (s.reason instanceof AuthExpiredError) {
+      authError ??= s.reason;
+    } else {
+      unchecked++;
+    }
+  });
+  if (authError) throw authError;
+  return { verified, unchecked };
+}
+
+/** Archives or trashes the sender's verified mail (all time). Only AuthExpiredError escapes. */
 async function cleanUp(sender: string, mode: "archive" | "trash", gmail: GmailClient): Promise<Cleanup> {
   if (!SEARCHABLE_SENDER.test(sender)) return { mode, ok: false, error: "sender address can't be searched safely" };
   try {
-    const ids = await gmail.listMessageIds(`from:(${sender})`);
-    await (mode === "archive" ? gmail.archive(ids) : gmail.trash(ids));
-    return { mode, ok: true, count: ids.length };
+    const found = await gmail.listMessageIds(`from:(${sender})`);
+    const { verified, unchecked } = await verifiedSenderIds(sender, found, gmail);
+    if (verified.length > 0) await (mode === "archive" ? gmail.archive(verified) : gmail.trash(verified));
+    if (unchecked === 0) return { mode, ok: true, count: verified.length };
+    return { mode, ok: false, count: verified.length, error: `${unchecked} emails couldn't be checked and were left in place` };
   } catch (err) {
     if (err instanceof AuthExpiredError) throw err;
     return { mode, ok: false, error: messageOf(err) };
