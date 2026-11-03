@@ -1,0 +1,402 @@
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --text: #1d2330;
+  --muted: #5f6b7a;
+  --border: #e1e5ea;
+  --row-hover: #f8fafc;
+  --row-selected: #eef4ff;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --warn-bg: #fff6dc;
+  --warn-text: #7a5300;
+  --error-bg: #fdecec;
+  --error-text: #a11d1d;
+  --radius: 8px;
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef0f3;
+  font-size: 13px;
+}
+
+/* Buttons and button-styled links */
+
+button,
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 550;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled),
+.button:hover {
+  background: var(--row-hover);
+  border-color: #c9d0d8;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button:focus-visible,
+.button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.button-primary:hover:not(:disabled),
+a.button-primary:hover {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.button-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* Full-page screens: loading, setup, sign-in */
+
+.screen {
+  max-width: 640px;
+  margin: 64px auto;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.screen h1 {
+  margin-bottom: 16px;
+  font-size: 22px;
+}
+
+.screen ol {
+  padding-left: 20px;
+}
+
+.screen li {
+  margin-bottom: 8px;
+}
+
+/* Signed-in layout: header and toolbar on top, the table fills the rest and scrolls */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app > * {
+  flex: none;
+}
+
+.demo-banner {
+  padding: 6px 24px;
+  background: #fde68a;
+  color: #713f12;
+  font-weight: 600;
+  text-align: center;
+}
+
+.header {
+  padding: 12px 24px 0;
+}
+
+.header-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.header-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-email {
+  margin-right: 4px;
+  color: var(--muted);
+}
+
+.notice {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #e8eefc;
+}
+
+.notice-warn {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.notice-error {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.app > .notice {
+  margin: 12px 24px 0;
+}
+
+.scan-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.scan-progress progress {
+  flex: 0 1 240px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 12px 24px;
+}
+
+.search {
+  flex: 1 1 280px;
+  max-width: 480px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font: inherit;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolbar .button-primary {
+  margin-left: auto;
+}
+
+/* Table: scrolls inside its box (both ways), so the header row can stick */
+
+.table-wrap {
+  flex: 1 1 0;
+  min-height: 240px;
+  margin: 0 24px 24px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.subscriptions {
+  width: 100%;
+  min-width: 960px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.subscriptions th,
+.subscriptions td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.subscriptions th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fafbfc;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.subscriptions tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.subscriptions tbody tr.selected {
+  background: var(--row-selected);
+}
+
+.subscriptions tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sort {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.sort:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+
+.sort-arrow {
+  display: inline-block;
+  width: 1em;
+  font-size: 10px;
+}
+
+.col-select {
+  width: 44px;
+}
+
+.col-sender {
+  width: 26%;
+}
+
+.col-count {
+  width: 110px;
+}
+
+.col-lastReceived {
+  width: 130px;
+}
+
+.col-method {
+  width: 110px;
+}
+
+.col-status {
+  width: 240px;
+}
+
+td.col-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.sender-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sender-name,
+.sender-address,
+.subject,
+.status-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sender-name {
+  font-weight: 650;
+}
+
+.sender-address {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.subject {
+  display: block;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-one-click {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-mailto {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.badge-manual {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.status-pending {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.status-failed {
+  color: var(--error-text);
+}
+
+.status-still-sending {
+  color: var(--warn-text);
+}
+
+.empty {
+  padding: 32px;
+  color: var(--muted);
+  text-align: center;
+}
