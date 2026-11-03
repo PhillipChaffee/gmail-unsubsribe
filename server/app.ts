@@ -209,7 +209,7 @@ export function createApp(deps: AppDeps): express.Express {
       if (error === "access_denied") return void sendSignInProblem(res, 400, "Sign-in was cancelled.");
       const reason = (typeof error === "string" ? error : "unknown error").slice(0, MAX_REASON);
       console.warn(`Google sign-in failed: ${reason}`);
-      return void sendSignInProblem(res, 400, `Sign-in failed: ${reason}.`);
+      return void sendSignInProblem(res, 400, `Sign-in failed: ${reason}`);
     }
     try {
       await auth.handleCallback(typeof code === "string" ? code : undefined, typeof oauthState === "string" ? oauthState : undefined);
@@ -220,7 +220,7 @@ export function createApp(deps: AppDeps): express.Express {
       const exchange = err instanceof TokenExchangeError;
       const reason = exchange ? err.reason : (err instanceof Error ? err.message : String(err)).slice(0, MAX_REASON);
       console.warn(`Google sign-in failed: ${reason}`);
-      return void sendSignInProblem(res, exchange ? 502 : 500, `Sign-in failed: ${reason}.`);
+      return void sendSignInProblem(res, exchange ? 502 : 500, `Sign-in failed: ${reason}`);
     }
     // A new sign-in, possibly as another Google account, starts a new session like logout does: the
     // old account's scan rows must not be unsubscribed (or cleaned up) against the new mailbox.

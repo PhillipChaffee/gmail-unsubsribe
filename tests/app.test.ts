@@ -407,7 +407,7 @@ describe("auth", () => {
     const r = await t.get(`/api/auth/callback?error=${encodeURIComponent("<b>admin_policy_enforced</b>")}&state=s1`);
     expect(r.status).toBe(400);
     expect(r.headers["content-type"]).toMatch(/^text\/html/);
-    expect(r.text).toContain("Sign-in failed: &lt;b&gt;admin_policy_enforced&lt;/b&gt;.");
+    expect(r.text).toContain("Sign-in failed: &lt;b&gt;admin_policy_enforced&lt;/b&gt; <a href=\"/api/auth/login\">Try again</a>");
     expect(r.text).not.toContain("<b>");
     expect(warn).toHaveBeenCalledWith("Google sign-in failed: <b>admin_policy_enforced</b>");
     warn.mockRestore();
@@ -429,7 +429,7 @@ describe("auth", () => {
     const r = await t.get(`/api/auth/callback?code=secret-code-123&state=${oauthState}`);
     expect(r.status).toBe(502);
     expect(r.headers["content-type"]).toMatch(/^text\/html/);
-    expect(r.text).toContain("Sign-in failed: invalid_client (Unauthorized).");
+    expect(r.text).toContain("Sign-in failed: invalid_client (Unauthorized) <a href=\"/api/auth/login\">Try again</a>");
     expect(r.text).toContain('<a href="/api/auth/login">Try again</a>');
     expect(r.text).not.toContain("secret-code-123");
     expect(warn).toHaveBeenCalledWith("Google sign-in failed: invalid_client (Unauthorized)");
@@ -448,7 +448,7 @@ describe("auth", () => {
     const r = await t.get("/api/auth/callback?code=c1&state=s1");
     expect(r.status).toBe(500);
     expect(r.headers["content-type"]).toMatch(/^text\/html/);
-    expect(r.text).toContain("Sign-in failed: EACCES &lt;tokens.json&gt;.");
+    expect(r.text).toContain("Sign-in failed: EACCES &lt;tokens.json&gt; <a href=\"/api/auth/login\">Try again</a>");
     expect(warn).toHaveBeenCalledWith("Google sign-in failed: EACCES <tokens.json>");
     expect((await t.get("/api/status")).body.hasScan).toBe(true);
     warn.mockRestore();
@@ -460,7 +460,7 @@ describe("auth", () => {
     vi.spyOn(t.auth!, "handleCallback").mockRejectedValue(new TokenExchangeError("fetch failed"));
     const r = await t.get("/api/auth/callback?code=c1&state=s1");
     expect(r.status).toBe(502);
-    expect(r.text).toContain("Sign-in failed: fetch failed.");
+    expect(r.text).toContain("Sign-in failed: fetch failed <a href=\"/api/auth/login\">Try again</a>");
     warn.mockRestore();
   });
 
