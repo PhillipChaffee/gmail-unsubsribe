@@ -254,7 +254,7 @@ test("selected rows hidden by search are not unsubscribed", async ({ page, reque
   await expect(page.getByTestId("unsubscribe-button")).toHaveText("Unsubscribe from 1 selected");
 
   const dialog = await openDialog(page);
-  await expect(dialog.getByRole("heading")).toHaveText(/^Unsubscribe from 1 senders?\?$/);
+  await expect(dialog.getByRole("heading")).toHaveText("Unsubscribe from 1 sender?");
   await expect(dialog.getByTestId("confirm-count-one-click")).toHaveText("1 by one-click");
   await dialog.getByTestId("confirm-submit").click();
 
@@ -310,4 +310,20 @@ test("a 409 at start follows the running job and clears its notice once that job
   expect(await senders(page.getByTestId("result-row"))).toEqual([other]);
   await expect(notice).toHaveCount(0);
   await expect(statusOf(page, mine)).toHaveText("");
+});
+
+test("acting on a scan the server no longer holds shows the restart notice, not a raw error", async ({ page, request }) => {
+  const sender = "briefing@dailybrief.example";
+  // What a server restart does to the page's scan (§10): the server forgets it while the table stays.
+  expect((await request.post("/__fake/reset")).ok()).toBe(true);
+  await select(page, sender);
+  await (await openDialog(page)).getByTestId("confirm-submit").click();
+
+  await expect(page.getByTestId("restart-notice")).toHaveText("The server restarted, rescan to continue.");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("NO_SCAN")).toHaveCount(0);
+
+  // Rescanning clears the notice and the table works again.
+  await rescan(page);
+  await expect(page.getByTestId("restart-notice")).toHaveCount(0);
 });

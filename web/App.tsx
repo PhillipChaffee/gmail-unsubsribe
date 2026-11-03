@@ -72,6 +72,11 @@ export function App() {
   // The functions below touch only state setters, refs and the API, so a closure from any render works.
 
   function fail(err: unknown): void {
+    // The server no longer holds the scan these rows came from (it restarted): §10's notice, not a raw error.
+    if (err instanceof ApiError && err.status === 400 && err.code === "NO_SCAN") {
+      setRestarted(true);
+      return;
+    }
     // A 401 means the sign-in ended meanwhile: show the screen the server now reports.
     if (err instanceof ApiError && err.status === 401) {
       api.status().then(

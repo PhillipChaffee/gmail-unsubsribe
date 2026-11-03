@@ -50,7 +50,9 @@ export function ConfirmDialog({ subs, onCancel, onConfirm }: ConfirmDialogProps)
         onCancel();
       }}
     >
-      <h2 id="confirm-title">Unsubscribe from {subs.length} senders?</h2>
+      <h2 id="confirm-title">
+        Unsubscribe from {subs.length} {subs.length === 1 ? "sender" : "senders"}?
+      </h2>
       <ul className="confirm-counts">
         {METHOD_LINES.map(({ method, text }) => {
           const n = count(method);
