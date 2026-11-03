@@ -400,3 +400,145 @@ td.col-count {
   color: var(--muted);
   text-align: center;
 }
+
+/* Confirm dialog (§3.4) */
+
+.confirm {
+  width: min(480px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.25);
+}
+
+.confirm::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.confirm h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.confirm-counts {
+  margin: 0 0 20px;
+  padding: 0 0 0 16px;
+  list-style: none;
+}
+
+.confirm-counts li {
+  padding: 2px 0;
+}
+
+.confirm-cleanup {
+  margin: 0 0 24px;
+  padding: 0;
+  border: none;
+}
+
+.confirm-cleanup legend {
+  margin-bottom: 8px;
+  padding: 0;
+  font-weight: 600;
+}
+
+.confirm-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding-left: 16px;
+}
+
+.confirm-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Results panel (§3.5) */
+
+.results {
+  margin: 12px 24px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.results-summary {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.results-list {
+  max-height: 176px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.result-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 300px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+.result-sender {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-body {
+  min-width: 0;
+}
+
+.result-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.result-failed {
+  color: var(--error-text);
+}
+
+.result-detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.result-cleanup {
+  margin-top: 2px;
+  color: var(--warn-text);
+  font-size: 12px;
+}

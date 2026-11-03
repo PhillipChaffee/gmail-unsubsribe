@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { statusFromResult } from "../shared/status";
-import type { HistoryEntry, Job, SenderResult, StatusResponse, Subscription } from "../shared/types";
+import type { CleanupMode, HistoryEntry, Job, SenderResult, StatusResponse, Subscription } from "../shared/types";
 import { ApiError, api, pollJob } from "./api";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Header } from "./components/Header";
+import { ResultsPanel } from "./components/ResultsPanel";
 import { SetupNotice } from "./components/SetupNotice";
 import { SignIn } from "./components/SignIn";
 import { SubscriptionTable } from "./components/SubscriptionTable";
@@ -31,6 +33,12 @@ function applyResults(rows: Subscription[], results: SenderResult[], at: number)
   });
 }
 
+/** A manual result after Mark done: it counts as unsubscribed, as the server now records it. */
+function markedDone(r: SenderResult): SenderResult {
+  const { manualUrl: _manualUrl, ...rest } = r;
+  return { ...rest, outcome: "unsubscribed", detail: "marked done by user" };
+}
+
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /** The app shell (§3): setup, sign-in, or the signed-in header and subscriptions table. */
@@ -48,6 +56,10 @@ export function App() {
   const [job, setJob] = useState<Job | null>(null);
   const [pending, setPending] = useState<ReadonlySet<string>>(NONE);
   const [restarted, setRestarted] = useState(false);
+  /** The senders the confirm dialog is asking about; null when it is closed. */
+  const [confirming, setConfirming] = useState<Subscription[] | null>(null);
+  /** The results of the last finished unsubscribe job, until dismissed or the next scan. */
+  const [results, setResults] = useState<SenderResult[] | null>(null);
 
   const stopPolling = useRef<() => void>(() => {});
   /** How many results of which unsubscribe job are already applied to the rows (results only grow). */
@@ -81,6 +93,8 @@ export function App() {
     setJob(null);
     setPending(NONE);
     setRestarted(false);
+    setConfirming(null);
+    setResults(null);
   }
 
   /** Loads the server's scan. Hidden-at-load is fixed here, so rows changed later in the session stay visible (§3.3). */
@@ -98,8 +112,7 @@ export function App() {
 
   /**
    * Applies one update of the followed job, scan or unsubscribe: progress, pending rows, results, errors.
-   * Task 11 starts its unsubscribe jobs through `follow()` so their updates land here too, rather than
-   * handling them in a second place.
+   * Every job lands here, whether this page started it or resumed it after a reload.
    */
   async function onJob(j: Job | null): Promise<void> {
     if (!j) {
@@ -123,8 +136,13 @@ export function App() {
       // An expired sign-in shows the reconnect screen (§10).
       if (j.error?.code === "AUTH_EXPIRED") setStatus(await api.status());
       else setError(`${j.kind === "scan" ? "Scan" : "Unsubscribe"} failed: ${j.error?.message ?? "unknown error"}`);
-    } else if (j.state === "done" && j.kind === "scan") {
-      await loadScan();
+    } else if (j.state === "done") {
+      if (j.kind === "scan") {
+        await loadScan();
+      } else {
+        setResults(j.results);
+        setSelection({});
+      }
     }
   }
 
@@ -136,8 +154,25 @@ export function App() {
   async function startScan(): Promise<void> {
     setRestarted(false);
     setError(null);
+    setResults(null); // its Mark done buttons belong to the scan being replaced
     const started = await api.startScan();
     follow(started.ok ? started.jobId : started.activeJobId);
+  }
+
+  /** Runs the confirmed unsubscribe: its senders show "Unsubscribing…" until their results arrive (§3.5). */
+  async function startUnsubscribe(subs: Subscription[], cleanup: CleanupMode): Promise<void> {
+    setConfirming(null);
+    setError(null);
+    setResults(null);
+    const senders = subs.map((s) => s.sender);
+    const started = await api.startUnsubscribe({ senders, cleanup });
+    if (!started.ok) {
+      setError("Another job is already running. Try again when it finishes.");
+      follow(started.activeJobId);
+      return;
+    }
+    setPending(new Set(senders));
+    follow(started.jobId);
   }
 
   /**
@@ -176,7 +211,10 @@ export function App() {
   const onManualDone = useCallback((sender: string) => {
     api
       .manualDone(sender)
-      .then(() => setRows((rs) => rs && rs.map((r): Subscription => (r.sender === sender ? { ...r, status: "unsubscribed" } : r))))
+      .then(() => {
+        setRows((rs) => rs && rs.map((r): Subscription => (r.sender === sender ? { ...r, status: "unsubscribed" } : r)));
+        setResults((rs) => rs && rs.map((r) => (r.sender === sender && r.outcome === "manual" ? markedDone(r) : r)));
+      })
       .catch(fail);
   }, []);
 
@@ -196,7 +234,8 @@ export function App() {
   if (!status.configured) return <SetupNotice />;
   if (!status.signedIn) return <SignIn expired={status.authError === "expired"} />;
 
-  const busy = job !== null;
+  // Pending senders mean an unsubscribe job is running, even before its first poll answers.
+  const busy = job !== null || pending.size > 0;
   return (
     <div className="app">
       {status.demo && (
@@ -218,6 +257,7 @@ export function App() {
           {error}
         </p>
       )}
+      {results && <ResultsPanel results={results} onManualDone={onManualDone} onDismiss={() => setResults(null)} />}
       {rows && (
         <>
           <div className="toolbar">
@@ -239,7 +279,14 @@ export function App() {
               />
               Show unsubscribed
             </label>
-            <button type="button" className="button-primary" data-testid="unsubscribe-button" disabled={visibleSelected.length === 0 || busy}>
+            <button
+              type="button"
+              className="button-primary"
+              data-testid="unsubscribe-button"
+              disabled={visibleSelected.length === 0 || busy}
+              // Only the selected rows the search still shows (Review Focus 5).
+              onClick={() => setConfirming(rows.filter((r) => visibleSelected.includes(r.sender)))}
+            >
               Unsubscribe from {visibleSelected.length} selected
             </button>
           </div>
@@ -255,6 +302,13 @@ export function App() {
             onManualDone={onManualDone}
           />
         </>
+      )}
+      {confirming && (
+        <ConfirmDialog
+          subs={confirming}
+          onCancel={() => setConfirming(null)}
+          onConfirm={(cleanup) => void startUnsubscribe(confirming, cleanup).catch(fail)}
+        />
       )}
     </div>
   );
