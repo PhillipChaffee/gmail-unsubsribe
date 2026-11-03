@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
-import type { ScanResult, StatusResponse } from "../shared/types";
+import type { Job, JobStartResponse, ScanResult, StatusResponse } from "../shared/types";
 
 const senders = (rows: Locator) => rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-sender") ?? ""));
 const row = (page: Page, sender: string) => page.locator(`[data-testid="row"][data-sender="${sender}"]`);
@@ -265,4 +265,49 @@ test("selected rows hidden by search are not unsubscribed", async ({ page, reque
   await expect(statusOf(page, shown)).toHaveText("✅ Unsubscribed");
   await expect(statusOf(page, hidden)).toHaveText("");
   expect(await serverStatus(request, hidden)).toBe("active");
+});
+
+test("a 409 at start follows the running job and clears its notice once that job ends", async ({ page, request }) => {
+  const mine = "briefing@dailybrief.example";
+  const other = "offers@gadgetgrove.example";
+  // Another tab's job, started through the API.
+  const started = await request.post("/api/unsubscribe", { data: { senders: [other], cleanup: "leave" } });
+  expect(started.status()).toBe(202);
+  const { jobId } = (await started.json()) as JobStartResponse;
+
+  // A demo job ends within milliseconds, too soon to race from the page. So the page sees the job as the server
+  // shows it while it runs: the page's start gets the busy answer (§5: 409 { activeJobId }), and its first poll
+  // finds the job still running. Later polls are held until release.
+  await page.route("**/api/unsubscribe", (route) => route.fulfill({ status: 409, json: { activeJobId: jobId } }));
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let polls = 0;
+  await page.route("**/api/jobs/*", async (route) => {
+    if (polls++ === 0) {
+      const job = (await (await route.fetch()).json()) as Job;
+      await route.fulfill({ json: { ...job, state: "running", results: [] } });
+      return;
+    }
+    await held;
+    await route.continue();
+  });
+
+  await select(page, mine);
+  await (await openDialog(page)).getByTestId("confirm-submit").click();
+
+  // The page follows the running job, and nothing of its own started.
+  await expect(statusOf(page, other)).toHaveText("Unsubscribing…");
+  await expect(page.getByTestId("rescan-button")).toBeDisabled();
+  await expect(statusOf(page, mine)).toHaveText("");
+  // The notice stays while that job runs...
+  const notice = page.getByRole("alert");
+  await expect(notice).toHaveText("Another job is already running. Try again when it finishes.");
+
+  // ...and goes once it ends; the panel shows the followed job's results.
+  release();
+  await expect(statusOf(page, other)).toHaveText("✅ Unsubscribed");
+  await expect(page.getByTestId("results-summary")).toHaveText("✅ 1 unsubscribed");
+  expect(await senders(page.getByTestId("result-row"))).toEqual([other]);
+  await expect(notice).toHaveCount(0);
+  await expect(statusOf(page, mine)).toHaveText("");
 });

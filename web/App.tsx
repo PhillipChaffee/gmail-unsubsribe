@@ -41,6 +41,10 @@ function markedDone(r: SenderResult): SenderResult {
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+/** Shown when starting an unsubscribe finds another job running (409). It lasts only until that job ends. */
+const BUSY_NOTICE = "Another job is already running. Try again when it finishes.";
+const withoutBusyNotice = (e: string | null) => (e === BUSY_NOTICE ? null : e);
+
 /** The app shell (§3): setup, sign-in, or the signed-in header and subscriptions table. */
 export function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -115,6 +119,8 @@ export function App() {
    * Every job lands here, whether this page started it or resumed it after a reload.
    */
   async function onJob(j: Job | null): Promise<void> {
+    // The followed job ended (or is gone), so a busy notice asking to wait for it no longer applies.
+    if (j?.state !== "running") setError(withoutBusyNotice);
     if (!j) {
       setJob(null);
       setPending(NONE);
@@ -167,7 +173,7 @@ export function App() {
     const senders = subs.map((s) => s.sender);
     const started = await api.startUnsubscribe({ senders, cleanup });
     if (!started.ok) {
-      setError("Another job is already running. Try again when it finishes.");
+      setError(BUSY_NOTICE);
       follow(started.activeJobId);
       return;
     }
