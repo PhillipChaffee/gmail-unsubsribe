@@ -106,10 +106,19 @@ describe("GoogleAuth", () => {
     expect(auth.authError).toBe("expired");
   });
 
+  it("logout revokes the refresh token and clears tokens", async () => {
+    await auth.handleCallback("c", stateOf(auth.createAuthUrl()));
+    const revoke = vi.spyOn(client, "revokeToken").mockResolvedValue({} as never);
+    await auth.logout();
+    expect(revoke).toHaveBeenCalledWith("r1");
+    expect(await tokens.load()).toBeNull();
+  });
+
   it("logout swallows revoke errors and clears tokens", async () => {
     await auth.handleCallback("c", stateOf(auth.createAuthUrl()));
-    vi.spyOn(client, "revokeCredentials").mockRejectedValue(new Error("network"));
+    const revoke = vi.spyOn(client, "revokeToken").mockRejectedValue(new Error("network"));
     await expect(auth.logout()).resolves.toBeUndefined();
+    expect(revoke).toHaveBeenCalled();
     expect(await tokens.load()).toBeNull();
     expect(auth.isSignedIn()).toBe(false);
     expect(auth.authError).toBeUndefined();

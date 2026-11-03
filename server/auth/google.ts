@@ -17,7 +17,7 @@ export interface GoogleAuthOptions {
 
 export class GoogleAuth {
   readonly client: OAuth2Client;
-  authError: "expired" | undefined;
+  private _authError: "expired" | undefined;
   private readonly tokens: TokenStore;
   private readonly now: () => number;
   private readonly states = new Map<string, number>();
@@ -28,6 +28,10 @@ export class GoogleAuth {
     this.now = opts.now ?? Date.now;
     this.client =
       opts.oauthClient ?? new OAuth2Client({ clientId: opts.clientId, clientSecret: opts.clientSecret, redirectUri: opts.redirectUri });
+  }
+
+  get authError(): "expired" | undefined {
+    return this._authError;
   }
 
   /** Loads persisted tokens into the client and persists refreshed tokens as the client emits them. */
@@ -57,7 +61,7 @@ export class GoogleAuth {
     const { tokens } = await this.client.getToken(code);
     this.client.setCredentials(tokens);
     await this.tokens.save(tokens);
-    this.authError = undefined;
+    this._authError = undefined;
   }
 
   isSignedIn(): boolean {
@@ -67,18 +71,21 @@ export class GoogleAuth {
   async markExpired(): Promise<void> {
     await this.tokens.clear();
     this.client.setCredentials({});
-    this.authError = "expired";
+    this._authError = "expired";
   }
 
   async logout(): Promise<void> {
     try {
-      await this.client.revokeCredentials();
+      // Prefer the refresh token: it revokes the whole grant and, unlike the access token, never expires.
+      const { refresh_token, access_token } = this.client.credentials;
+      const token = refresh_token ?? access_token;
+      if (token) await this.client.revokeToken(token);
     } catch {
       // best effort
     }
     await this.tokens.clear();
     this.client.setCredentials({});
-    this.authError = undefined;
+    this._authError = undefined;
   }
 
   private pruneStates(): void {
