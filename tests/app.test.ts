@@ -30,6 +30,17 @@ const LINK_ONLY: FakeMessageSpec = {
   oneClick: false,
 };
 
+/** A default fakeMessage sender: https one-click plus mailto. */
+const oneClickSpec = (n: number): FakeMessageSpec => ({ id: `o${n}`, from: `Offers ${n} <deals@offers${n}.example>`, daysAgo: 1 });
+const mailtoOnlySpec = (n: number): FakeMessageSpec => ({
+  id: `m${n}`,
+  from: `List ${n} <list@mail${n}.example>`,
+  daysAgo: 1,
+  listUnsubscribe: `<mailto:unsub@mail${n}.example>`,
+  oneClick: false,
+});
+const senderOf = (spec: FakeMessageSpec) => /<([^>]+)>/.exec(spec.from)![1]!;
+
 function deferred<T>() {
   let resolve!: (v: T) => void;
   let reject!: (e: unknown) => void;
@@ -38,6 +49,13 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** The i-th job started through a `vi.spyOn(jobs, "start")` spy; it stays observable after jobs.clear(). */
+function startedJob(start: { mock: { results: { value: unknown }[] } }, i: number): Job {
+  const started = start.mock.results[i]!.value as ReturnType<JobRegistry["start"]>;
+  if (!started.ok) throw new Error("job did not start");
+  return started.job;
 }
 
 /** Demo-style deps by default (auth undefined); `mode: "google"` adds a real GoogleAuth with an empty token store. */
@@ -364,27 +382,78 @@ describe("auth", () => {
     const markExpired = vi.spyOn(t.auth!, "markExpired");
     const start = vi.spyOn(t.jobs, "start");
     const gates = [deferred<string[]>(), deferred<string[]>()];
-    vi.spyOn(t.gmail, "listMessageIds").mockImplementationOnce(() => gates[0]!.promise).mockImplementationOnce(() => gates[1]!.promise);
-    const jobAt = (i: number) => {
-      const started = start.mock.results[i]!.value as ReturnType<JobRegistry["start"]>;
-      if (!started.ok) throw new Error("job did not start");
-      return started.job;
-    };
+    const listIds = vi
+      .spyOn(t.gmail, "listMessageIds")
+      .mockImplementationOnce(() => gates[0]!.promise)
+      .mockImplementationOnce(() => gates[1]!.promise);
+    const metadata = vi.spyOn(t.gmail, "getMessageMetadata");
 
     // Sign in again after logout so a stale result would be visible.
     await t.post("/api/scan");
     await t.post("/api/auth/logout");
     t.auth!.client.setCredentials({ refresh_token: "r2" });
     gates[0]!.resolve(["s1"]);
-    await vi.waitFor(() => expect(jobAt(0).state).toBe("done"));
+    await vi.waitFor(() => expect(startedJob(start, 0).state).not.toBe("running"));
+    expect(metadata).not.toHaveBeenCalled(); // the in-flight list result is dropped; the stale scan reads nothing more
     expect((await t.get("/api/status")).body.hasScan).toBe(false);
 
     await t.post("/api/scan");
+    expect(listIds).toHaveBeenCalledTimes(2);
     await t.post("/api/auth/logout");
     gates[1]!.reject(new AuthExpiredError());
-    await vi.waitFor(() => expect(jobAt(1).state).toBe("error"));
+    await vi.waitFor(() => expect(startedJob(start, 1).state).toBe("error"));
     expect(markExpired).not.toHaveBeenCalled();
     expect((await t.get("/api/status")).body.authError).toBeUndefined();
+  });
+
+  it("logout stops a running unsubscribe: in-flight results are dropped, nothing more is sent, cleaned up or recorded", async () => {
+    const specs = [oneClickSpec(1), oneClickSpec(2), oneClickSpec(3), mailtoOnlySpec(1), mailtoOnlySpec(2), LINK_ONLY, oneClickSpec(4)];
+    const t = await setup({ mode: "google", specs });
+    t.auth!.client.setCredentials({ refresh_token: "r1" });
+    vi.spyOn(t.auth!, "logout").mockImplementation(async () => t.auth!.client.setCredentials({}));
+    const markExpired = vi.spyOn(t.auth!, "markExpired");
+    await scan(t);
+
+    const posts: ReturnType<typeof deferred<MethodOutcome>>[] = [];
+    t.postOneClick.mockImplementation(() => {
+      const d = deferred<MethodOutcome>();
+      posts.push(d);
+      return d.promise;
+    });
+    const mailGate = deferred<void>();
+    const sendRaw = vi.spyOn(t.gmail, "sendRaw").mockImplementationOnce(() => mailGate.promise);
+    const listIds = vi.spyOn(t.gmail, "listMessageIds");
+    const archive = vi.spyOn(t.gmail, "archive");
+    const historySet = vi.spyOn(t.history, "set");
+    const start = vi.spyOn(t.jobs, "start");
+
+    const r = await t.post("/api/unsubscribe", { senders: specs.map(senderOf), cleanup: "archive" });
+    expect(r.status).toBe(202);
+    // All four workers are now waiting: three one-click POSTs and one mailto send.
+    await vi.waitFor(() => {
+      expect(posts).toHaveLength(3);
+      expect(sendRaw).toHaveBeenCalledTimes(1);
+    });
+
+    await t.post("/api/auth/logout");
+    expect((await t.get("/api/status")).body.activeJobId).toBeUndefined();
+    // Signed in again (possibly as another account) before the old job drains.
+    t.auth!.client.setCredentials({ refresh_token: "r2" });
+    t.postOneClick.mockResolvedValue({ ok: true, detail: "HTTP 200" });
+    for (const d of posts) d.resolve({ ok: true, detail: "HTTP 200" });
+    // What google-auth-library throws once logout has emptied the credentials: not an auth error.
+    mailGate.reject(new Error("No access, refresh token, API key or refresh handler callback is set."));
+    await vi.waitFor(() => expect(startedJob(start, 0).state).not.toBe("running"));
+
+    expect(historySet).not.toHaveBeenCalled();
+    expect(t.history.all()).toEqual({});
+    expect(t.postOneClick).toHaveBeenCalledTimes(3);
+    expect(sendRaw).toHaveBeenCalledTimes(1);
+    expect(t.gmail.sent).toEqual([]);
+    expect(listIds).not.toHaveBeenCalled();
+    expect(archive).not.toHaveBeenCalled();
+    expect(markExpired).not.toHaveBeenCalled();
+    expect((await t.get("/api/status")).body).toMatchObject({ signedIn: true, hasScan: false });
   });
 });
 
@@ -431,6 +500,38 @@ describe("demo endpoints", () => {
     expect(t.history.all()).toEqual({});
     expect((await t.get("/api/status")).body.hasScan).toBe(false);
     expect((await t.get(`/api/jobs/${r1.body.jobId}`)).status).toBe(404);
+  });
+
+  it("POST /__fake/reset stops a running unsubscribe, so it can't refill the cleared history", async () => {
+    const specs = [oneClickSpec(1), LINK_ONLY, oneClickSpec(2), oneClickSpec(3), oneClickSpec(4), mailtoOnlySpec(1)];
+    const t = await setup({ specs });
+    await scan(t);
+    const posts: ReturnType<typeof deferred<MethodOutcome>>[] = [];
+    t.postOneClick.mockImplementation(() => {
+      const d = deferred<MethodOutcome>();
+      posts.push(d);
+      return d.promise;
+    });
+    const trash = vi.spyOn(t.gmail, "trash");
+    const start = vi.spyOn(t.jobs, "start");
+
+    await t.post("/api/unsubscribe", { senders: specs.map(senderOf), cleanup: "trash" });
+    // The link-only sender finishes first (recorded and cleaned up before the reset); four one-click POSTs then wait.
+    await vi.waitFor(() => {
+      expect(posts).toHaveLength(4);
+      expect(t.history.get("links@web.example")?.outcome).toBe("manual-pending");
+    });
+    expect(trash.mock.calls).toEqual([[["l1"]]]);
+
+    expect((await request(t.app).post("/__fake/reset").set("Host", HOST)).status).toBe(200);
+    t.postOneClick.mockResolvedValue({ ok: true, detail: "HTTP 200" });
+    for (const d of posts) d.resolve({ ok: true, detail: "HTTP 200" });
+    await vi.waitFor(() => expect(startedJob(start, 0).state).not.toBe("running"));
+
+    expect(t.history.all()).toEqual({});
+    expect(t.gmail.sent).toEqual([]);
+    expect(trash).toHaveBeenCalledTimes(1);
+    expect(t.postOneClick).toHaveBeenCalledTimes(4);
   });
 
   it("POST /__fake/reset refuses a cross-site Origin", async () => {

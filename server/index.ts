@@ -6,7 +6,7 @@ import { gmail as gmailApi } from "@googleapis/gmail";
 import express from "express";
 import { createApp, type AppDeps } from "./app";
 import { GoogleAuth } from "./auth/google";
-import { loadConfig } from "./config";
+import { loadConfig, storePaths } from "./config";
 import { createDemoMailbox, demoBaseUrl, demoOneClick } from "./demo";
 import { FakeGmailClient } from "./gmail/fake";
 import { GoogleGmailClient } from "./gmail/google";
@@ -25,8 +25,9 @@ try {
   // .env is optional
 }
 const config = loadConfig();
-const history = await HistoryStore.open(join(config.dataDir, "history.json"));
-const tokens = new TokenStore(join(config.dataDir, "tokens.json"));
+const paths = storePaths(config); // demo mode: <dataDir>/demo, apart from the real history
+const history = await HistoryStore.open(paths.history);
+const tokens = new TokenStore(paths.tokens);
 
 type ModeDeps = Pick<AppDeps, "gmail" | "auth" | "checkUrl" | "postOneClick" | "demoReset">;
 

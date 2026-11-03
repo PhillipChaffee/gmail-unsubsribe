@@ -9,7 +9,8 @@ import type { UrlCheck } from "./urlPolicy";
 
 export interface RunnerDeps {
   gmail: GmailClient;
-  history: HistoryStore;
+  /** The runner only writes history; a narrow type lets the API wrap it per session. */
+  history: Pick<HistoryStore, "set">;
   checkUrl: (url: string) => Promise<UrlCheck>;
   postOneClick: (url: string) => Promise<MethodOutcome>;
   now?: () => number;

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../server/config";
+import { loadConfig, storePaths } from "../server/config";
 
 describe("loadConfig", () => {
   it("defaults port 3000, dataDir <cwd>/.data, not configured without creds", () => {
@@ -32,5 +32,16 @@ describe("loadConfig", () => {
     expect(c.port).toBe(4567);
     expect(c.redirectUri).toBe("http://127.0.0.1:4567/api/auth/callback");
     expect(c.dataDir).toBe(resolve("/w", "d"));
+  });
+});
+
+describe("storePaths", () => {
+  it("puts the stores in dataDir", () => {
+    expect(storePaths(loadConfig({}, [], "/w"))).toEqual({ history: resolve("/w", ".data", "history.json"), tokens: resolve("/w", ".data", "tokens.json") });
+  });
+  it("demo mode uses a demo subdirectory, so the fake mailbox never touches the real history", () => {
+    for (const c of [loadConfig({}, ["--demo"], "/w"), loadConfig({ FAKE_GMAIL: "1", DATA_DIR: "d" }, [], "/w")]) {
+      expect(storePaths(c)).toEqual({ history: resolve(c.dataDir, "demo", "history.json"), tokens: resolve(c.dataDir, "demo", "tokens.json") });
+    }
   });
 });

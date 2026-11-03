@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 export interface AppConfig {
   port: number;
@@ -32,4 +32,13 @@ export function loadConfig(
     redirectUri: `http://127.0.0.1:${port}/api/auth/callback`,
     configured: demo || (!!clientId && !!clientSecret),
   };
+}
+
+/**
+ * Where the stores live. Demo mode gets its own subdirectory, so the fake mailbox never writes into
+ * the real history.json and POST /__fake/reset can't wipe it.
+ */
+export function storePaths(config: Pick<AppConfig, "dataDir" | "demo">): { history: string; tokens: string } {
+  const dir = config.demo ? join(config.dataDir, "demo") : config.dataDir;
+  return { history: join(dir, "history.json"), tokens: join(dir, "tokens.json") };
 }
