@@ -12,9 +12,19 @@ export function hostGuard(port: number): RequestHandler {
   };
 }
 
+/** A request that carries an Origin must come from our own origin (browsers send one on every cross-site POST). */
+export function originGuard(port: number): RequestHandler {
+  const origins = allowed(port).map((h) => `http://${h}`);
+  return (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin === undefined || origins.includes(origin)) return next();
+    res.status(403).type("text/plain").send("Forbidden origin");
+  };
+}
+
 /** Mutating requests must be JSON and, if they carry an Origin, come from our own origin. */
 export function csrfGuard(port: number): RequestHandler {
-  const origins = allowed(port).map((h) => `http://${h}`);
+  const checkOrigin = originGuard(port);
   return (req, res, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
     const type = req.headers["content-type"] ?? "";
@@ -22,11 +32,6 @@ export function csrfGuard(port: number): RequestHandler {
       res.status(415).type("text/plain").send("Content-Type must be application/json");
       return;
     }
-    const origin = req.headers.origin;
-    if (origin !== undefined && !origins.includes(origin)) {
-      res.status(403).type("text/plain").send("Forbidden origin");
-      return;
-    }
-    next();
+    checkOrigin(req, res, next);
   };
 }
