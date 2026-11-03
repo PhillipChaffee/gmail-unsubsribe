@@ -67,7 +67,8 @@ server/scan/headers.ts          Pure header parsing + analyzeMessage
 server/scan/scanner.ts          scanMailbox, deriveStatus
 server/unsub/urlPolicy.ts       checkOneClickUrl, isBlockedIp
 server/unsub/methods.ts         postOneClick, parseMailto, buildRfc822, sendMailto
-server/unsub/runner.ts          unsubscribeSender, runUnsubscribe, statusFromResult
+server/unsub/runner.ts          unsubscribeSender, runUnsubscribe
+shared/status.ts                statusFromResult (shared by server + web)
 server/auth/google.ts           GoogleAuth (OAuth flow, state, tokens, expiry)
 server/config.ts                loadConfig
 server/security.ts              hostGuard, csrfGuard
