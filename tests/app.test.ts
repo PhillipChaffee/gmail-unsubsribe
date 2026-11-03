@@ -582,10 +582,10 @@ describe("guards", () => {
       await request(t.app).get("/api/status").set("Host", "evil.example:3000"),
       await request(t.app).post("/api/scan").set("Host", HOST).set("Origin", "http://evil.example").send({}),
     ];
-    for (const r of responses) {
-      expect(r.headers["x-frame-options"], r.req.path).toBe("DENY");
-      expect(r.headers["content-security-policy"], r.req.path).toBe("frame-ancestors 'none'");
-    }
+    responses.forEach((r, i) => {
+      expect(r.headers["x-frame-options"], `response ${i}`).toBe("DENY");
+      expect(r.headers["content-security-policy"], `response ${i}`).toBe("frame-ancestors 'none'");
+    });
   });
 
   it("unknown /api routes and malformed JSON get JSON errors", async () => {

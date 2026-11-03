@@ -18,6 +18,8 @@ import { postOneClick } from "./unsub/methods";
 import { checkOneClickUrl } from "./unsub/urlPolicy";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
+/** Vite's own server.fs.deny defaults, which a custom deny list replaces. */
+const VITE_DEFAULT_FS_DENY = [".env", ".env.*", "*.{crt,pem,key,p12,pfx,cer,der}", ".npmrc", ".yarnrc.yml", "**/.git/**"];
 
 try {
   process.loadEnvFile();
@@ -78,7 +80,19 @@ if (config.prod) {
   const vite = await createServer({
     configFile: join(ROOT, "vite.config.ts"),
     root: join(ROOT, "web"),
-    server: { middlewareMode: true, hmr: { server } },
+    server: {
+      middlewareMode: true,
+      hmr: { server },
+      // Vite's defaults would serve the whole repo through /@fs/ (the data dir with tokens.json included)
+      // with CORS for any localhost origin, so another local page could read the tokens (§9). Serve only
+      // the UI's own sources, and send no CORS headers.
+      cors: false,
+      fs: {
+        strict: true,
+        allow: [join(ROOT, "web"), join(ROOT, "shared"), join(ROOT, "node_modules")],
+        deny: [...VITE_DEFAULT_FS_DENY, `${config.dataDir.replaceAll("\\", "/")}/**`, "**/.data/**", "**/.data-*/**"],
+      },
+    },
     appType: "spa",
   });
   app.use(vite.middlewares);
