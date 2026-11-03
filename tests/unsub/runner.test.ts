@@ -240,10 +240,21 @@ describe("unsubscribeSender: cleanup", () => {
     expect(listSpy).toHaveBeenCalledWith("from:(news@shop.com)");
   });
 
-  it("a sender address that would change the Gmail search is not cleaned up", async () => {
+  it("plain addresses (subdomains, hyphens, plus tags) are searched as-is", async () => {
+    const listSpy = vi.spyOn(gmail, "listMessageIds");
+    for (const sender of ["news+deals@mail.shop-online.co.uk", "a@b.co", "first.last_1@x-1.io"]) {
+      const r = await unsubscribeSender(sub(sender, { oneClickUrl: ONE_CLICK }), "archive", makeDeps());
+      expect(r.cleanup).toEqual({ mode: "archive", ok: true, count: 0 });
+      expect(listSpy).toHaveBeenLastCalledWith(`from:(${sender})`);
+    }
+  });
+
+  it("a sender address outside the plain-address pattern is not cleaned up", async () => {
     seedSenderMail();
     const listSpy = vi.spyOn(gmail, "listMessageIds");
-    for (const sender of ["-news@shop.com", "news@shop.com)OR(from:other.com", "news{a}@shop.com", "in:inbox@shop.com"]) {
+    const searchChanging = ["-news@shop.com", "news@shop.com)OR(from:other.com", "news{a}@shop.com", "in:inbox@shop.com"];
+    const badDomainLabel = ["news@-shop.com", "news@shop-.com", "news@mail.-shop.com"];
+    for (const sender of [...searchChanging, ...badDomainLabel]) {
       const r = await unsubscribeSender(sub(sender, { oneClickUrl: ONE_CLICK }), "trash", makeDeps());
       expect(r.outcome).toBe("unsubscribed");
       expect(r.cleanup).toEqual({ mode: "trash", ok: false, error: "sender address can't be searched safely" });

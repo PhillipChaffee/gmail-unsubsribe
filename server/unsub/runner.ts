@@ -23,9 +23,11 @@ const NOTHING_ATTEMPTED = "no automatic unsubscribe method";
 /**
  * Addresses that read as one plain term inside `from:(...)`. Anything else (a leading "-",
  * parentheses, braces, ":" ...) could make the search match other senders' mail, which cleanup
- * would then archive or trash.
+ * would then archive or trash. Such senders are still unsubscribed; only cleanup is skipped,
+ * with an error. Domain labels must be valid DNS labels (no leading or trailing "-").
  */
-const SEARCHABLE_SENDER = /^[a-z0-9_][a-z0-9._%+=-]*@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i;
+const DNS_LABEL = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+const SEARCHABLE_SENDER = new RegExp(`^[a-z0-9_][a-z0-9._%+=-]*@${DNS_LABEL}(?:\\.${DNS_LABEL})+$`, "i");
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -50,6 +52,8 @@ async function attemptMethods({ targets }: Subscription, deps: RunnerDeps): Prom
     steps.push(`email: ${res.detail}`);
   }
   const detail = steps.join("; ") || NOTHING_ATTEMPTED;
+  // §8 says "webUrl (or oneClickUrl)"; the scan sets webUrl whenever it sets oneClickUrl
+  // (parseListUnsubscribe: webUrl = httpsUrl ?? httpUrl), so webUrl alone covers both.
   if (targets.webUrl) return { outcome: "manual", methodUsed: "manual", detail, manualUrl: targets.webUrl };
   return { outcome: "failed", detail };
 }
@@ -104,7 +108,8 @@ export async function unsubscribeSender(sub: Subscription, cleanup: CleanupMode,
 /**
  * Runs unsubscribeSender over `subs` with bounded concurrency, calling onResult as each finishes.
  * After an AuthExpiredError no new sender starts; in-flight ones finish, then the run rejects with it.
- * Resolves with the results in input order.
+ * Resolves with the results in input order. The runner produces no row Status: callers derive it
+ * with statusFromResult (shared/status.ts), e.g. in onResult.
  */
 export async function runUnsubscribe(
   subs: Subscription[],
