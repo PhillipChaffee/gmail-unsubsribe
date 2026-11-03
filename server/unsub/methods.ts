@@ -1,5 +1,6 @@
 import { ONE_CLICK_TIMEOUT_MS, USER_AGENT } from "../constants";
 import { AuthExpiredError, type GmailClient } from "../gmail/types";
+import { BARE_ADDRESS } from "../scan/headers";
 
 export interface MethodOutcome {
   ok: boolean;
@@ -33,7 +34,15 @@ export async function postOneClick(
   }
 }
 
-/** Manual parse: `+` is literal in mailto, so URLSearchParams must not be used. */
+/** C0 controls and DEL: CR/LF would inject headers, the rest has no business in an unsubscribe email. */
+const CONTROL_CHAR = /[\x00-\x1f\x7f]/;
+
+/**
+ * Manual parse: `+` is literal in mailto, so URLSearchParams must not be used. The URI comes from a
+ * sender-controlled header (no DKIM gate applies to mailto), so it must name exactly one plain
+ * address: a list (`a@x,b@y`, `;`) would send mail from the user's account to people the confirm
+ * dialog never showed. Recipients in the query (`to=`, `cc=`, `bcc=`) are ignored.
+ */
 export function parseMailto(mailto: string): { to: string; subject: string; body: string } | null {
   if (!/^mailto:/i.test(mailto)) return null;
   const rest = mailto.slice("mailto:".length);
@@ -58,8 +67,8 @@ export function parseMailto(mailto: string): { to: string; subject: string; body
   }
   subject = subject || "unsubscribe";
   body = body || "unsubscribe";
-  if (!to.includes("@")) return null;
-  if ([to, subject, body].some((s) => /[\r\n]/.test(s))) return null;
+  if ([to, subject, body].some((s) => CONTROL_CHAR.test(s))) return null;
+  if (/[,;]/.test(to) || !BARE_ADDRESS.test(to)) return null;
   return { to, subject, body };
 }
 

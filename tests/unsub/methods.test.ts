@@ -80,8 +80,27 @@ describe("parseMailto", () => {
     expect(parseMailto("mailto:u@x.com?subject=&body=")).toEqual({ to: "u@x.com", subject: "unsubscribe", body: "unsubscribe" });
   });
 
-  it("keeps comma-separated address lists as-is", () => {
-    expect(parseMailto("mailto:a@x.com,b@x.com")?.to).toBe("a@x.com,b@x.com");
+  it("rejects anything but exactly one plain address, so a header can't add recipients", () => {
+    for (const m of [
+      "mailto:unsub@list.com,boss@victim-corp.com?subject=I%20resign",
+      "mailto:unsub@list.com%2Cboss@victim-corp.com",
+      "mailto:unsub@list.com;boss@victim-corp.com",
+      "mailto:a@x.com,b",
+      "mailto:List%20%3Cunsub@list.com%3E",
+      "mailto:unsub@list.com%20boss@victim-corp.com",
+      "mailto:@list.com",
+      "mailto:unsub@",
+    ]) {
+      expect(parseMailto(m), m).toBeNull();
+    }
+  });
+
+  it("rejects any control character, not only CR/LF", () => {
+    expect(parseMailto("mailto:u@x.com%00")).toBeNull();
+    expect(parseMailto("mailto:u@x.com?subject=a%00b")).toBeNull();
+    expect(parseMailto("mailto:u@x.com?subject=a%09b")).toBeNull();
+    expect(parseMailto("mailto:u@x.com?body=a%7Fb")).toBeNull();
+    expect(parseMailto("mailto:u@x.com?body=a%1Bb")).toBeNull();
   });
 
   it("rejects CR/LF injection", () => {

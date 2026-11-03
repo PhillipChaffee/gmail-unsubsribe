@@ -34,7 +34,8 @@ export function decodeRfc2047(s: string): string {
   return joined.replace(ENCODED_WORD, (_m, cs: string, enc: string, text: string) => decodeWord(cs, enc, text));
 }
 
-const BARE_ADDRESS = /^[^\s@<>"]+@[^\s@<>"]+$/;
+/** One address without a display name or angle brackets. */
+export const BARE_ADDRESS = /^[^\s@<>"]+@[^\s@<>"]+$/;
 
 export function parseFrom(raw: string | undefined): { name: string; address: string } | null {
   if (!raw) return null;
