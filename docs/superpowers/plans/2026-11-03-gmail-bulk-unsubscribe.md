@@ -456,7 +456,7 @@ Tasks in Wave B must not edit `package.json`, `shared/types.ts` or `server/gmail
 ### Task 6: Unsubscribe runner (`server/unsub/runner.ts`)
 
 **Files:**
-- Create: `server/unsub/runner.ts`
+- Create: `server/unsub/runner.ts`, `shared/status.ts`
 - Test: `tests/unsub/runner.test.ts`
 
 **Interfaces:**
@@ -471,6 +471,7 @@ Tasks in Wave B must not edit `package.json`, `shared/types.ts` or `server/gmail
   }
   export function unsubscribeSender(sub: Subscription, cleanup: CleanupMode, deps: RunnerDeps): Promise<SenderResult>;
   export function runUnsubscribe(subs: Subscription[], cleanup: CleanupMode, deps: RunnerDeps, onResult: (r: SenderResult) => void): Promise<SenderResult[]>;
+  // shared/status.ts (pure, imported by the runner, server/app.ts and the web UI; no duplicates):
   export function statusFromResult(r: SenderResult): Status; // unsubscribed→"unsubscribed", manual→"manual", failed→"failed"
   ```
   - Method chain (§8):
@@ -622,7 +623,7 @@ Tasks in Wave B must not edit `package.json`, `shared/types.ts` or `server/gmail
 - Test: `tests/app.test.ts`, `tests/demo.test.ts`
 
 **Interfaces:**
-- Consumes: everything above. Specifically: `scanMailbox` (T4); `runUnsubscribe`, `statusFromResult` (T6); `checkOneClickUrl`, `postOneClick` (T5); `GoogleAuth`, `InvalidStateError` (T7); `loadConfig`, `hostGuard`, `csrfGuard`, `JobRegistry` (T8); `GoogleGmailClient`, `FakeGmailClient`, `fakeMessage` (T3); `HistoryStore`, `TokenStore` (T1).
+- Consumes: everything above. Specifically: `scanMailbox` (T4); `runUnsubscribe` (T6), `statusFromResult` (`shared/status.ts`, T6); `checkOneClickUrl`, `postOneClick` (T5); `GoogleAuth`, `InvalidStateError` (T7); `loadConfig`, `hostGuard`, `csrfGuard`, `JobRegistry` (T8); `GoogleGmailClient`, `FakeGmailClient`, `fakeMessage` (T3); `HistoryStore`, `TokenStore` (T1).
 - Produces:
   ```ts
   // demo.ts
@@ -803,7 +804,7 @@ Tasks in Wave B must not edit `package.json`, `shared/types.ts` or `server/gmail
   - Flow:
     1. The button is labeled `Unsubscribe from N selected` and uses the visible selected senders (Review Focus 5).
     2. Confirm → `startUnsubscribe({ senders, cleanup })` → those senders go into `pending` → `pollJob`.
-    3. On each update, for each result: update the row's `status = statusFromResult(r)`. Mirror that function in the web code; it's a 3-line mapping. Remove the sender from `pending`.
+    3. On each update, for each result: update the row's `status = statusFromResult(r)` (import from `shared/status.ts`). Remove the sender from `pending`.
     4. On done → show `ResultsPanel` and clear the selection.
   - Results summary format: `✅ X unsubscribed · ❌ Y failed · ↗ Z needs you`, omitting zero parts. A failed row shows `❌ Failed: <detail>`. A cleanup error shows `Unsubscribed, but couldn't <archive|move to Trash> emails: <error>`.
   - StatusCell:
