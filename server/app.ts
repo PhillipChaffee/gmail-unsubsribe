@@ -2,7 +2,7 @@ import express from "express";
 import type { ErrorRequestHandler, RequestHandler, Response } from "express";
 import { statusFromResult } from "../shared/status";
 import type { CleanupMode, HistoryEntry, ScanResult, StatusResponse, Subscription } from "../shared/types";
-import { InvalidStateError, type GoogleAuth } from "./auth/google";
+import { InvalidStateError, TokenExchangeError, type GoogleAuth } from "./auth/google";
 import type { AppConfig } from "./config";
 import { fakeEndpointsRouter } from "./demo";
 import { AuthExpiredError, type GmailClient } from "./gmail/types";
@@ -36,11 +36,12 @@ interface AppState {
 const DEMO_EMAIL = "demo@example.com";
 const CLEANUP_MODES: readonly string[] = ["leave", "archive", "trash"] satisfies CleanupMode[];
 const BAD_STATE_PAGE = 'Sign-in link expired or invalid. <a href="/">Try again</a>';
+const MAX_REASON = 200;
 
 const isCleanupMode = (v: unknown): v is CleanupMode => typeof v === "string" && CLEANUP_MODES.includes(v);
 
 /**
- * Thrown into a job whose session ended (logout, demo reset). It is an AuthExpiredError, so the
+ * Thrown into a job whose session ended (sign-in, logout, demo reset). It is an AuthExpiredError, so the
  * scanner and runner stop on it without recording anything.
  */
 class SessionEndedError extends AuthExpiredError {
@@ -67,6 +68,17 @@ function parseUnsubscribe(body: unknown, scan: ScanResult): { subs: Subscription
   return { subs, cleanup };
 }
 
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** The page the browser lands on when sign-in didn't complete; `message` is escaped. */
+function sendSignInProblem(res: Response, status: number, message: string): void {
+  res
+    .status(status)
+    .type("html")
+    .send(`${escapeHtml(message)} <a href="/api/auth/login">Try again</a> · <a href="/">Back to the app</a>`);
+}
+
 function sendJobStart(res: Response, started: ReturnType<JobRegistry["start"]>): void {
   if (started.ok) res.status(202).json({ jobId: started.job.id });
   else res.status(409).json({ activeJobId: started.activeJobId });
@@ -76,7 +88,7 @@ function sendJobStart(res: Response, started: ReturnType<JobRegistry["start"]>):
 export function createApp(deps: AppDeps): express.Express {
   const { config, gmail, auth, history, jobs } = deps;
   const now = deps.now ?? Date.now;
-  // Replaced, never cleared in place, on logout and demo reset. A job still running from before
+  // Replaced, never cleared in place, on sign-in, logout and demo reset. A job still running from before
   // then writes only to the old object, so its result can't leak into the new session, and its
   // sessionDeps stop it from touching Gmail or history again.
   let state: AppState = {};
@@ -120,6 +132,12 @@ export function createApp(deps: AppDeps): express.Express {
     };
   }
 
+  /** Forgets the scan, the cached email and the jobs; a still-running job stops (sessionDeps). */
+  function endSession(): void {
+    state = {};
+    jobs.clear();
+  }
+
   const isSignedIn = () => (auth ? auth.isSignedIn() : config.demo);
   const requireSignedIn: RequestHandler = (_req, res, next) => {
     if (isSignedIn()) return next();
@@ -157,8 +175,7 @@ export function createApp(deps: AppDeps): express.Express {
     // No JSON requirement (test harnesses post it bare), but a cross-site page still can't trigger it.
     app.post("/__fake/reset", originGuard(config.port), async (_req, res) => {
       // End the session first, so a running job can't write to the history cleared below.
-      state = {};
-      jobs.clear();
+      endSession();
       await deps.demoReset?.();
       await history.clear();
       res.json({ ok: true });
@@ -184,22 +201,34 @@ export function createApp(deps: AppDeps): express.Express {
 
   app.get("/api/auth/callback", async (req, res, next) => {
     if (!auth) return next();
-    const { code, state: oauthState } = req.query;
+    const { code, state: oauthState, error } = req.query;
+    // Google redirects with ?error= when the user cancels (access_denied) or the request was refused.
+    if (error !== undefined) {
+      if (error === "access_denied") return void sendSignInProblem(res, 400, "Sign-in was cancelled.");
+      const reason = (typeof error === "string" ? error : "unknown error").slice(0, MAX_REASON);
+      console.warn(`Google sign-in failed: ${reason}`);
+      return void sendSignInProblem(res, 400, `Sign-in failed: ${reason}.`);
+    }
     try {
       await auth.handleCallback(typeof code === "string" ? code : undefined, typeof oauthState === "string" ? oauthState : undefined);
     } catch (err) {
-      if (!(err instanceof InvalidStateError)) throw err;
-      res.status(400).type("html").send(BAD_STATE_PAGE);
-      return;
+      if (err instanceof InvalidStateError) return void res.status(400).type("html").send(BAD_STATE_PAGE);
+      // A rejected code exchange is most often a wrong GOOGLE_CLIENT_SECRET; say so in the tab and the terminal.
+      // Only the reason is logged: never the error object, whose request config holds the code.
+      const exchange = err instanceof TokenExchangeError;
+      const reason = exchange ? err.reason : (err instanceof Error ? err.message : String(err)).slice(0, MAX_REASON);
+      console.warn(`Google sign-in failed: ${reason}`);
+      return void sendSignInProblem(res, exchange ? 502 : 500, `Sign-in failed: ${reason}.`);
     }
-    state.email = undefined;
+    // A new sign-in, possibly as another Google account, starts a new session like logout does: the
+    // old account's scan rows must not be unsubscribed (or cleaned up) against the new mailbox.
+    endSession();
     res.redirect(302, "/");
   });
 
   app.post("/api/auth/logout", async (_req, res) => {
     // End the session first: a running job stops before revoking empties the credentials under it.
-    state = {};
-    jobs.clear();
+    endSession();
     await auth?.logout();
     res.json({ ok: true });
   });

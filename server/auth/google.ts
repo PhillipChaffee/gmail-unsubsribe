@@ -6,6 +6,31 @@ import type { TokenStore } from "../store/tokens";
 
 export class InvalidStateError extends Error {}
 
+/**
+ * Google refused the authorization code, or couldn't be reached: a wrong client secret
+ * (`invalid_client`), a reused or expired code (`invalid_grant`), a network error. `reason` is short
+ * and safe to show and log: it never holds the code or a token.
+ */
+export class TokenExchangeError extends Error {
+  constructor(readonly reason: string) {
+    super(`Google sign-in failed: ${reason}`);
+    this.name = "TokenExchangeError";
+  }
+}
+
+const MAX_REASON = 200;
+
+/** The OAuth error (`invalid_client (Unauthorized)`) from Google's token response, else the message. */
+function exchangeFailureReason(err: unknown): string {
+  const data = (err as { response?: { data?: unknown } } | null)?.response?.data;
+  let reason = err instanceof Error ? err.message : String(err);
+  if (typeof data === "object" && data !== null) {
+    const { error, error_description: description } = data as { error?: unknown; error_description?: unknown };
+    if (typeof error === "string" && error) reason = typeof description === "string" && description ? `${error} (${description})` : error;
+  }
+  return reason.length > MAX_REASON ? `${reason.slice(0, MAX_REASON)}…` : reason;
+}
+
 export interface GoogleAuthOptions {
   clientId: string;
   clientSecret: string;
@@ -41,6 +66,9 @@ export class GoogleAuth {
     if (this.listening) return;
     this.listening = true;
     this.client.on("tokens", (t: Credentials) => {
+      // Signed out meanwhile (logout, expiry): a refresh that finishes late must not recreate tokens.json.
+      // A sign-in's own tokens are saved by handleCallback.
+      if (!this.client.credentials.refresh_token) return;
       // TokenStore.save merges, so a refresh without refresh_token keeps the stored one.
       this.tokens.save(t).catch((err: unknown) => console.warn("Failed to persist refreshed tokens:", err));
     });
@@ -58,9 +86,15 @@ export class GoogleAuth {
     if (state) this.states.delete(state); // single use, even when expired
     if (expiresAt === undefined || this.now() > expiresAt) throw new InvalidStateError("Invalid or expired OAuth state");
     if (!code) throw new InvalidStateError("Missing authorization code");
-    const { tokens } = await this.client.getToken(code);
-    this.client.setCredentials(tokens);
+    let tokens: Credentials;
+    try {
+      ({ tokens } = await this.client.getToken(code));
+    } catch (err) {
+      throw new TokenExchangeError(exchangeFailureReason(err));
+    }
+    // Saved first, so a failed write leaves the client as it was instead of signed in but unsaved.
     await this.tokens.save(tokens);
+    this.client.setCredentials(tokens);
     this._authError = undefined;
   }
 

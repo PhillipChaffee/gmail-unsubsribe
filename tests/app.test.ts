@@ -5,7 +5,7 @@ import type { Express } from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../server/app";
-import { GoogleAuth } from "../server/auth/google";
+import { GoogleAuth, TokenExchangeError } from "../server/auth/google";
 import { loadConfig } from "../server/config";
 import { FakeGmailClient, fakeMessage, type FakeMessageSpec } from "../server/gmail/fake";
 import { AuthExpiredError } from "../server/gmail/types";
@@ -347,18 +347,121 @@ describe("auth", () => {
     expect(r.text).toBe('Sign-in link expired or invalid. <a href="/">Try again</a>');
   });
 
-  it("callback success redirects home and forgets the cached email", async () => {
+  it("callback success redirects home and starts a fresh session: no cached email, no scan, no old jobs", async () => {
     const t = await setup({ mode: "google" });
     t.auth!.client.setCredentials({ refresh_token: "r1" });
     vi.spyOn(t.gmail, "getProfileEmail").mockResolvedValueOnce("first@gmail.com").mockResolvedValueOnce("second@gmail.com");
     const handle = vi.spyOn(t.auth!, "handleCallback").mockResolvedValue();
-    expect((await t.get("/api/status")).body.email).toBe("first@gmail.com");
+    const scanned = await t.post("/api/scan");
+    await pollJob(t, scanned.body.jobId);
+    expect((await t.get("/api/status")).body).toMatchObject({ email: "first@gmail.com", hasScan: true });
 
     const r = await t.get("/api/auth/callback?code=c1&state=s1");
     expect(r.status).toBe(302);
     expect(r.headers.location).toBe("/");
     expect(handle).toHaveBeenCalledWith("c1", "s1");
-    expect((await t.get("/api/status")).body.email).toBe("second@gmail.com");
+    // Possibly another Google account: the old account's rows must not be offered for unsubscribing.
+    expect((await t.get("/api/status")).body).toMatchObject({ email: "second@gmail.com", hasScan: false });
+    expect((await t.get("/api/scan/latest")).status).toBe(404);
+    expect((await t.post("/api/unsubscribe", { senders: ["news@shop.example"], cleanup: "trash" })).body).toEqual({ error: "NO_SCAN" });
+    expect((await t.get(`/api/jobs/${scanned.body.jobId}`)).status).toBe(404);
+  });
+
+  it("a scan still running at a new sign-in is stopped and can't restore its result", async () => {
+    const t = await setup({ mode: "google" });
+    t.auth!.client.setCredentials({ refresh_token: "r1" });
+    vi.spyOn(t.auth!, "handleCallback").mockImplementation(async () => t.auth!.client.setCredentials({ refresh_token: "r2" }));
+    const markExpired = vi.spyOn(t.auth!, "markExpired");
+    const start = vi.spyOn(t.jobs, "start");
+    const gate = deferred<string[]>();
+    vi.spyOn(t.gmail, "listMessageIds").mockImplementationOnce(() => gate.promise);
+    const metadata = vi.spyOn(t.gmail, "getMessageMetadata");
+
+    const first = await t.post("/api/scan");
+    expect((await t.get("/api/status")).body.activeJobId).toBe(first.body.jobId);
+    expect((await t.get("/api/auth/callback?code=c2&state=s2")).status).toBe(302);
+    expect((await t.get("/api/status")).body.activeJobId).toBeUndefined();
+
+    gate.resolve(["s1"]);
+    await vi.waitFor(() => expect(startedJob(start, 0).state).not.toBe("running"));
+    expect(metadata).not.toHaveBeenCalled();
+    expect(markExpired).not.toHaveBeenCalled();
+    expect((await t.get("/api/status")).body).toMatchObject({ signedIn: true, hasScan: false });
+    expect((await t.post("/api/scan")).status).toBe(202);
+  });
+
+  it("callback ?error=access_denied (Cancel on Google's screen) → 'Sign-in was cancelled' page", async () => {
+    const t = await setup({ mode: "google" });
+    const handle = vi.spyOn(t.auth!, "handleCallback");
+    const r = await t.get("/api/auth/callback?error=access_denied&state=s1");
+    expect(r.status).toBe(400);
+    expect(r.headers["content-type"]).toMatch(/^text\/html/);
+    expect(r.text).toContain("Sign-in was cancelled.");
+    expect(r.text).toContain('<a href="/api/auth/login">Try again</a>');
+    expect(handle).not.toHaveBeenCalled();
+  });
+
+  it("callback with another ?error → escaped 'Sign-in failed' page, logged", async () => {
+    const t = await setup({ mode: "google" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await t.get(`/api/auth/callback?error=${encodeURIComponent("<b>admin_policy_enforced</b>")}&state=s1`);
+    expect(r.status).toBe(400);
+    expect(r.headers["content-type"]).toMatch(/^text\/html/);
+    expect(r.text).toContain("Sign-in failed: &lt;b&gt;admin_policy_enforced&lt;/b&gt;.");
+    expect(r.text).not.toContain("<b>");
+    expect(warn).toHaveBeenCalledWith("Google sign-in failed: <b>admin_policy_enforced</b>");
+    warn.mockRestore();
+  });
+
+  it("a code exchange Google rejects (e.g. a wrong client secret) → 502 'Sign-in failed' page with the reason, logged without the code", async () => {
+    const t = await setup({ mode: "google" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(t.auth!.client, "getToken").mockRejectedValue(
+      Object.assign(new Error("invalid_client"), {
+        status: 401,
+        response: { status: 401, data: { error: "invalid_client", error_description: "Unauthorized" } },
+      }) as never,
+    );
+    const login = await t.get("/api/auth/login");
+    const oauthState = new URL(login.headers.location!).searchParams.get("state")!;
+
+    const r = await t.get(`/api/auth/callback?code=secret-code-123&state=${oauthState}`);
+    expect(r.status).toBe(502);
+    expect(r.headers["content-type"]).toMatch(/^text\/html/);
+    expect(r.text).toContain("Sign-in failed: invalid_client (Unauthorized).");
+    expect(r.text).toContain('<a href="/api/auth/login">Try again</a>');
+    expect(r.text).not.toContain("secret-code-123");
+    expect(warn).toHaveBeenCalledWith("Google sign-in failed: invalid_client (Unauthorized)");
+    expect(JSON.stringify([...warn.mock.calls, ...error.mock.calls])).not.toContain("secret-code-123");
+    expect((await t.get("/api/status")).body.signedIn).toBe(false);
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
+  it("other callback failures (e.g. tokens.json can't be written) → 500 'Sign-in failed' page, escaped, and the session is kept", async () => {
+    const t = await setup({ mode: "google" });
+    t.auth!.client.setCredentials({ refresh_token: "r1" });
+    await scan(t);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(t.auth!, "handleCallback").mockRejectedValue(new Error("EACCES <tokens.json>"));
+    const r = await t.get("/api/auth/callback?code=c1&state=s1");
+    expect(r.status).toBe(500);
+    expect(r.headers["content-type"]).toMatch(/^text\/html/);
+    expect(r.text).toContain("Sign-in failed: EACCES &lt;tokens.json&gt;.");
+    expect(warn).toHaveBeenCalledWith("Google sign-in failed: EACCES <tokens.json>");
+    expect((await t.get("/api/status")).body.hasScan).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("TokenExchangeError from handleCallback maps to 502", async () => {
+    const t = await setup({ mode: "google" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(t.auth!, "handleCallback").mockRejectedValue(new TokenExchangeError("fetch failed"));
+    const r = await t.get("/api/auth/callback?code=c1&state=s1");
+    expect(r.status).toBe(502);
+    expect(r.text).toContain("Sign-in failed: fetch failed.");
+    warn.mockRestore();
   });
 
   it("logout signs out, clears the scan and the jobs", async () => {

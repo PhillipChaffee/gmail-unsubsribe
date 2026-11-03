@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OAuth2Client } from "google-auth-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GoogleAuth, InvalidStateError } from "../../server/auth/google";
+import { GoogleAuth, InvalidStateError, TokenExchangeError } from "../../server/auth/google";
 import { GMAIL_SCOPE, OAUTH_STATE_TTL_MS } from "../../server/constants";
 import { TokenStore } from "../../server/store/tokens";
 
@@ -26,7 +26,8 @@ beforeEach(async () => {
   client = new OAuth2Client({ clientId: "id", clientSecret: "secret", redirectUri: REDIRECT });
   now = 1_000_000;
   getToken = vi.spyOn(client, "getToken").mockResolvedValue({ tokens: { access_token: "a1", refresh_token: "r1" }, res: null } as never);
-  vi.spyOn(client, "revokeCredentials").mockResolvedValue({} as never);
+  // Never reach Google from a test: logout revokes through revokeToken.
+  vi.spyOn(client, "revokeToken").mockResolvedValue({} as never);
   auth = make();
 });
 
@@ -52,6 +53,36 @@ describe("GoogleAuth", () => {
     await auth.markExpired();
     await auth.handleCallback("c", stateOf(auth.createAuthUrl()));
     expect(auth.authError).toBeUndefined();
+  });
+
+  it("a failed code exchange becomes TokenExchangeError with Google's error as the reason, and signs nobody in", async () => {
+    const rejected = Object.assign(new Error("invalid_client"), {
+      status: 401,
+      response: { status: 401, data: { error: "invalid_client", error_description: "Unauthorized" } },
+    });
+    getToken.mockRejectedValueOnce(rejected);
+    const err = await auth.handleCallback("secret-code", stateOf(auth.createAuthUrl())).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TokenExchangeError);
+    expect((err as TokenExchangeError).reason).toBe("invalid_client (Unauthorized)");
+    expect(String((err as Error).message)).not.toContain("secret-code");
+    expect(auth.isSignedIn()).toBe(false);
+    expect(await tokens.load()).toBeNull();
+  });
+
+  it("an exchange failure without an OAuth error body uses the message, cut to 200 characters", async () => {
+    getToken.mockRejectedValueOnce(new Error("getaddrinfo ENOTFOUND oauth2.googleapis.com"));
+    await expect(auth.handleCallback("c", stateOf(auth.createAuthUrl()))).rejects.toMatchObject({
+      reason: "getaddrinfo ENOTFOUND oauth2.googleapis.com",
+    });
+    getToken.mockRejectedValueOnce(new Error("x".repeat(500)));
+    const err = (await auth.handleCallback("c", stateOf(auth.createAuthUrl())).catch((e: unknown) => e)) as TokenExchangeError;
+    expect(err.reason).toBe(`${"x".repeat(200)}…`);
+  });
+
+  it("a token file that can't be written fails the callback and leaves the client signed out", async () => {
+    vi.spyOn(tokens, "save").mockRejectedValueOnce(new Error("EACCES"));
+    await expect(auth.handleCallback("c", stateOf(auth.createAuthUrl()))).rejects.toThrow("EACCES");
+    expect(auth.isSignedIn()).toBe(false);
   });
 
   it("state is single-use", async () => {
@@ -111,6 +142,26 @@ describe("GoogleAuth", () => {
     const revoke = vi.spyOn(client, "revokeToken").mockResolvedValue({} as never);
     await auth.logout();
     expect(revoke).toHaveBeenCalledWith("r1");
+    expect(await tokens.load()).toBeNull();
+  });
+
+  it("logout falls back to revoking the access token when there is no refresh token", async () => {
+    client.setCredentials({ access_token: "a-only" });
+    const revoke = vi.spyOn(client, "revokeToken").mockResolvedValue({} as never);
+    await auth.logout();
+    expect(revoke).toHaveBeenCalledWith("a-only");
+  });
+
+  it("a token refresh that finishes after logout or expiry doesn't write tokens.json again", async () => {
+    await auth.handleCallback("c", stateOf(auth.createAuthUrl()));
+    await auth.init();
+    await auth.logout();
+    const save = vi.spyOn(tokens, "save");
+    client.emit("tokens", { access_token: "late", expiry_date: 1 });
+    await auth.handleCallback("c2", stateOf(auth.createAuthUrl()));
+    await auth.markExpired();
+    client.emit("tokens", { access_token: "later", expiry_date: 2 });
+    expect(save).toHaveBeenCalledTimes(1); // only the second sign-in's own save
     expect(await tokens.load()).toBeNull();
   });
 
