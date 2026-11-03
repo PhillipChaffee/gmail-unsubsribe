@@ -28,7 +28,8 @@ export function loadConfig(
     clientSecret,
     demo,
     prod: argv.includes("--prod"),
-    dataDir: resolve(cwd, env.DATA_DIR ?? ".data"),
+    // `||`, not `??`: an empty DATA_DIR= would otherwise put tokens.json in the (not git-ignored) working directory.
+    dataDir: resolve(cwd, env.DATA_DIR || ".data"),
     redirectUri: `http://127.0.0.1:${port}/api/auth/callback`,
     configured: demo || (!!clientId && !!clientSecret),
   };

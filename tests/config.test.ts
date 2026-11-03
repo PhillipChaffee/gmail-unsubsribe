@@ -27,6 +27,9 @@ describe("loadConfig", () => {
   it("--prod sets prod", () => {
     expect(loadConfig({}, ["--prod"], "/w").prod).toBe(true);
   });
+  it("an empty DATA_DIR falls back to .data instead of the working directory", () => {
+    expect(loadConfig({ DATA_DIR: "" }, [], "/w").dataDir).toBe(resolve("/w", ".data"));
+  });
   it("redirectUri uses PORT; DATA_DIR overrides", () => {
     const c = loadConfig({ PORT: "4567", DATA_DIR: "d" }, [], "/w");
     expect(c.port).toBe(4567);

@@ -332,6 +332,16 @@ describe("unsubscribeSender: cleanup", () => {
     expect(trash).not.toHaveBeenCalled();
   });
 
+  it("verification stops fetching metadata after the first AuthExpiredError", async () => {
+    seed(...Array.from({ length: 30 }, (_, i) => ({ id: `n${i}`, from: "Shop <news@shop.com>", daysAgo: i + 1 })));
+    const metadata = vi.spyOn(gmail, "getMessageMetadata").mockRejectedValue(new AuthExpiredError());
+    await expect(unsubscribeSender(sub(SENDER, { oneClickUrl: ONE_CLICK }), "trash", makeDeps())).rejects.toBeInstanceOf(
+      AuthExpiredError,
+    );
+    // Only the requests already in flight (one per worker) were made; the other 22 never started.
+    expect(metadata.mock.calls.length).toBeLessThanOrEqual(8);
+  });
+
   it("AuthExpiredError during cleanup propagates after history was written", async () => {
     seedSenderMail();
     gmail.failNext = { method: "archive", error: new AuthExpiredError() };

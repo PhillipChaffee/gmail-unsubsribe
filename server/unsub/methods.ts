@@ -30,8 +30,16 @@ export async function postOneClick(
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       return { ok: false, detail: "timed out" };
     }
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    return { ok: false, detail: failureDetail(err) };
   }
+}
+
+/** fetch rejects every network failure as "fetch failed"; the cause says which (ENOTFOUND, a TLS error...). */
+function failureDetail(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = err.cause as { code?: unknown; message?: unknown } | null | undefined;
+  const why = typeof cause?.code === "string" ? cause.code : typeof cause?.message === "string" ? cause.message : "";
+  return why ? `${err.message} (${why})` : err.message;
 }
 
 /** C0 controls and DEL: CR/LF would inject headers, the rest has no business in an unsubscribe email. */

@@ -86,4 +86,13 @@ describe("isBlockedIp", () => {
       expect(isBlockedIp(ip), ip).toBe(false);
     }
   });
+
+  it("blocks reserved IPv4 ranges and IPv4-compatible IPv6", () => {
+    for (const ip of ["192.0.0.1", "198.18.0.1", "198.19.255.255", "240.0.0.1", "254.1.2.3", "::127.0.0.1", "::7f00:1"]) {
+      expect(isBlockedIp(ip), ip).toBe(true);
+    }
+    for (const ip of ["192.0.1.1", "198.17.255.255", "198.20.0.1", "2001:db9::1"]) {
+      expect(isBlockedIp(ip), ip).toBe(false);
+    }
+  });
 });

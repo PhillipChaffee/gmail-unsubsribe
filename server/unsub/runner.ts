@@ -77,23 +77,25 @@ function historyEntry(a: Attempt, at: number): HistoryEntry {
  * AuthExpiredError propagates once the pool has settled.
  */
 async function verifiedSenderIds(sender: string, ids: string[], gmail: GmailClient): Promise<{ verified: string[]; unchecked: number }> {
-  const settled = await mapLimit(ids, SCAN_CONCURRENCY, async (id) => {
-    const meta = await gmail.getMessageMetadata(id);
-    return parseFrom(meta.headers["from"]?.[0])?.address === sender;
-  });
-  const verified: string[] = [];
-  let unchecked = 0;
   let authError: AuthExpiredError | undefined;
-  settled.forEach((s, i) => {
-    if (s.status === "fulfilled") {
-      if (s.value) verified.push(ids[i]!);
-    } else if (s.reason instanceof AuthExpiredError) {
-      authError ??= s.reason;
-    } else {
-      unchecked++;
+  const settled = await mapLimit(ids, SCAN_CONCURRENCY, async (id) => {
+    // After an auth failure every further fetch would fail too: start no more (like the scanner).
+    if (authError) throw authError;
+    try {
+      const meta = await gmail.getMessageMetadata(id);
+      return parseFrom(meta.headers["from"]?.[0])?.address === sender;
+    } catch (err) {
+      if (err instanceof AuthExpiredError) authError ??= err;
+      throw err;
     }
   });
   if (authError) throw authError;
+  const verified: string[] = [];
+  let unchecked = 0;
+  settled.forEach((s, i) => {
+    if (s.status === "rejected") unchecked++;
+    else if (s.value) verified.push(ids[i]!);
+  });
   return { verified, unchecked };
 }
 

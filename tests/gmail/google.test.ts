@@ -122,6 +122,24 @@ describe("GoogleGmailClient", () => {
     expect(s.messages.trash).toHaveBeenCalledTimes(3);
   });
 
+  it("the trash summary names at most 5 failed ids", async () => {
+    const s = stub();
+    s.messages.trash.mockRejectedValue(Object.assign(new Error("nope"), { status: 404 }));
+    const ids = Array.from({ length: 40 }, (_, i) => `id${i}`);
+    await expect(s.client.trash(ids)).rejects.toThrow("Failed to trash 40 of 40 messages: id0, id1, id2, id3, id4 and 35 more");
+  });
+
+  it("trash stops sending requests after the first AuthExpiredError", async () => {
+    const s = stub();
+    const client = new GoogleGmailClient(s.api, { retry: noSleep, trashConcurrency: 1 });
+    s.messages.trash.mockImplementation(async ({ id }: { id: string }) => {
+      if (id === "b") throw Object.assign(new Error("unauth"), { status: 401 });
+      return { data: {} };
+    });
+    await expect(client.trash(["a", "b", "c", "d"])).rejects.toBeInstanceOf(AuthExpiredError);
+    expect(s.messages.trash.mock.calls.map((c) => c[0].id)).toEqual(["a", "b"]);
+  });
+
   it("invalid_grant from the API surfaces as AuthExpiredError", async () => {
     const s = stub();
     s.getProfile.mockRejectedValue(

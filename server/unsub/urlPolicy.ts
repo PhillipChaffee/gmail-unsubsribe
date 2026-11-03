@@ -16,15 +16,16 @@ for (const [net4, prefix] of [
   ["127.0.0.0", 8],
   ["169.254.0.0", 16],
   ["172.16.0.0", 12],
+  ["192.0.0.0", 24], // IETF protocol assignments
   ["192.168.0.0", 16],
-  ["224.0.0.0", 4],
-  ["255.255.255.255", 32],
+  ["198.18.0.0", 15], // benchmarking
+  ["224.0.0.0", 4], // multicast
+  ["240.0.0.0", 4], // reserved, includes 255.255.255.255
 ] as const) {
   blocked.addSubnet(net4, prefix, "ipv4");
 }
-blocked.addAddress("::", "ipv6");
-blocked.addAddress("::1", "ipv6");
 for (const [net6, prefix] of [
+  ["::", 96], // unspecified, loopback and IPv4-compatible (::127.0.0.1)
   ["fc00::", 7],
   ["fe80::", 10],
   ["ff00::", 8],

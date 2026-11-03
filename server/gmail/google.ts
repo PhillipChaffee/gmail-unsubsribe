@@ -4,6 +4,8 @@ import { isAuthError, withRetry, type RetryOptions } from "./retry";
 import { AuthExpiredError, METADATA_HEADERS, type GmailClient, type MessageMeta } from "./types";
 
 const ARCHIVE_CHUNK = 1000;
+/** The trash error is shown in the results panel and polled every 500 ms: name a few ids, count the rest. */
+const MAX_NAMED_IDS = 5;
 
 export class GoogleGmailClient implements GmailClient {
   private readonly retry: RetryOptions | undefined;
@@ -74,20 +76,22 @@ export class GoogleGmailClient implements GmailClient {
   }
 
   async trash(ids: string[]): Promise<void> {
-    const results = await mapLimit(ids, this.trashConcurrency, (id) =>
-      this.call(() => this.api.users.messages.trash({ userId: "me", id })),
-    );
-    const failed: string[] = [];
     let authError: AuthExpiredError | undefined;
-    results.forEach((r, i) => {
-      if (r.status === "rejected") {
-        failed.push(ids[i]);
-        if (r.reason instanceof AuthExpiredError) authError = r.reason;
+    const results = await mapLimit(ids, this.trashConcurrency, async (id) => {
+      // After an auth failure every further request (and its token refresh) would fail too.
+      if (authError) throw authError;
+      try {
+        return await this.call(() => this.api.users.messages.trash({ userId: "me", id }));
+      } catch (err) {
+        if (err instanceof AuthExpiredError) authError ??= err;
+        throw err;
       }
     });
     if (authError) throw authError;
+    const failed = ids.filter((_id, i) => results[i]!.status === "rejected");
     if (failed.length > 0) {
-      throw new Error(`Failed to trash ${failed.length} of ${ids.length} messages: ${failed.join(", ")}`);
+      const more = failed.length > MAX_NAMED_IDS ? ` and ${failed.length - MAX_NAMED_IDS} more` : "";
+      throw new Error(`Failed to trash ${failed.length} of ${ids.length} messages: ${failed.slice(0, MAX_NAMED_IDS).join(", ")}${more}`);
     }
   }
 }

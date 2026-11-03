@@ -6,6 +6,8 @@ interface HistoryFile {
   senders: Record<string, HistoryEntry>;
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
 /** Latest attempt per sender. In-memory map is the source of truth; writes are serialized. */
 export class HistoryStore {
   private queue: Promise<void> = Promise.resolve();
@@ -16,8 +18,14 @@ export class HistoryStore {
   ) {}
 
   static async open(filePath: string): Promise<HistoryStore> {
-    const file = await readJson<HistoryFile>(filePath, { version: 1, senders: {} });
-    return new HistoryStore(filePath, { ...(file.senders ?? {}) });
+    const file = await readJson<unknown>(filePath, { version: 1, senders: {} } satisfies HistoryFile);
+    const senders = isRecord(file) ? (file.senders ?? {}) : undefined;
+    if (!isRecord(senders)) {
+      // Valid JSON of the wrong shape (e.g. `null`): start empty, as for a corrupt file, instead of crashing.
+      console.warn(`Unexpected content in ${filePath}; starting with an empty history`);
+      return new HistoryStore(filePath, {});
+    }
+    return new HistoryStore(filePath, { ...(senders as Record<string, HistoryEntry>) });
   }
 
   get(sender: string): HistoryEntry | undefined {

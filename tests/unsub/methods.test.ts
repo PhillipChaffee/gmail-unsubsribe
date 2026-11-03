@@ -68,6 +68,30 @@ describe("postOneClick", () => {
     }) as unknown as typeof fetch;
     expect(await postOneClick("https://x.example/", { fetchImpl })).toEqual({ ok: false, detail: "boom" });
   });
+
+  it("a network failure names its cause instead of the bare 'fetch failed'", async () => {
+    const failWith = (cause: unknown) =>
+      (async () => {
+        throw new TypeError("fetch failed", { cause });
+      }) as unknown as typeof fetch;
+    const dns = Object.assign(new Error("getaddrinfo ENOTFOUND x.example"), { code: "ENOTFOUND" });
+    expect(await postOneClick("https://x.example/", { fetchImpl: failWith(dns) })).toEqual({ ok: false, detail: "fetch failed (ENOTFOUND)" });
+    const tls = new Error("unable to verify the first certificate");
+    expect(await postOneClick("https://x.example/", { fetchImpl: failWith(tls) })).toEqual({
+      ok: false,
+      detail: "fetch failed (unable to verify the first certificate)",
+    });
+    expect(await postOneClick("https://x.example/", { fetchImpl: failWith(undefined) })).toEqual({ ok: false, detail: "fetch failed" });
+  });
+
+  it("a real connection refusal is reported with its code", async () => {
+    const { base } = await start((_req, res) => res.end());
+    const port = new URL(base).port;
+    server!.closeAllConnections();
+    await new Promise<void>((r) => server!.close(() => r()));
+    server = undefined;
+    expect(await postOneClick(`http://127.0.0.1:${port}/u`)).toEqual({ ok: false, detail: "fetch failed (ECONNREFUSED)" });
+  });
 });
 
 describe("parseMailto", () => {
