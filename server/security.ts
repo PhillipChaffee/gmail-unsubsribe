@@ -2,6 +2,17 @@ import type { RequestHandler } from "express";
 
 const allowed = (port: number) => [`127.0.0.1:${port}`, `localhost:${port}`];
 
+/**
+ * Forbids framing on every response. Otherwise any site could load the app in a hidden iframe: its
+ * own same-origin requests pass the Host and CSRF guards, so a few redressed clicks would get past
+ * the confirm dialog (clickjacking).
+ */
+export const noFraming: RequestHandler = (_req, res, next) => {
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  next();
+};
+
 /** Rejects requests whose Host header is not the loopback address (DNS-rebinding defence). */
 export function hostGuard(port: number): RequestHandler {
   const hosts = allowed(port);

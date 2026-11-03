@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { csrfGuard, hostGuard } from "../server/security";
+import { csrfGuard, hostGuard, noFraming } from "../server/security";
 
 const PORT = 3456;
 const app = express();
@@ -42,5 +42,16 @@ describe("csrfGuard", () => {
   });
   it("GET without content-type → 200", async () => {
     expect((await request(app).get("/x").set("Host", host)).status).toBe(200);
+  });
+});
+
+describe("noFraming", () => {
+  it("forbids framing with X-Frame-Options and CSP frame-ancestors", async () => {
+    const framed = express();
+    framed.use(noFraming);
+    framed.get("/x", (_req, res) => void res.send("ok"));
+    const r = await request(framed).get("/x");
+    expect(r.headers["x-frame-options"]).toBe("DENY");
+    expect(r.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
   });
 });

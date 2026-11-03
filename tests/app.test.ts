@@ -572,6 +572,22 @@ describe("guards", () => {
     expect((await t.get("/api/status")).body.activeJobId).toBeUndefined();
   });
 
+  it("every response forbids framing, so no site can overlay the app and redress clicks", async () => {
+    const t = await setup();
+    t.app.get("/", (_req, res) => void res.type("html").send("<!doctype html><p>app</p>")); // stands in for the SPA
+    const responses = [
+      await t.get("/"),
+      await t.get("/api/status"),
+      await t.post("/api/scan"),
+      await request(t.app).get("/api/status").set("Host", "evil.example:3000"),
+      await request(t.app).post("/api/scan").set("Host", HOST).set("Origin", "http://evil.example").send({}),
+    ];
+    for (const r of responses) {
+      expect(r.headers["x-frame-options"], r.req.path).toBe("DENY");
+      expect(r.headers["content-security-policy"], r.req.path).toBe("frame-ancestors 'none'");
+    }
+  });
+
   it("unknown /api routes and malformed JSON get JSON errors", async () => {
     const t = await setup();
     const missing = await t.get("/api/nope");

@@ -8,7 +8,7 @@ import { fakeEndpointsRouter } from "./demo";
 import { AuthExpiredError, type GmailClient } from "./gmail/types";
 import type { JobControl, JobRegistry } from "./jobs";
 import { scanMailbox } from "./scan/scanner";
-import { csrfGuard, hostGuard, originGuard } from "./security";
+import { csrfGuard, hostGuard, noFraming, originGuard } from "./security";
 import type { HistoryStore } from "./store/history";
 import type { MethodOutcome } from "./unsub/methods";
 import { runUnsubscribe, type RunnerDeps } from "./unsub/runner";
@@ -168,6 +168,8 @@ export function createApp(deps: AppDeps): express.Express {
   }
 
   const app = express();
+  // First, so every response carries the headers: API, demo endpoints, guard rejections and the SPA index.ts adds.
+  app.use(noFraming);
   app.use(hostGuard(config.port));
 
   if (config.demo) {
