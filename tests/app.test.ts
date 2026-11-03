@@ -401,15 +401,29 @@ describe("auth", () => {
     expect(handle).not.toHaveBeenCalled();
   });
 
-  it("callback with another ?error → escaped 'Sign-in failed' page, logged", async () => {
+  it("callback with another ?error code → 'Sign-in failed' page naming the code, logged", async () => {
     const t = await setup({ mode: "google" });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const r = await t.get(`/api/auth/callback?error=${encodeURIComponent("<b>admin_policy_enforced</b>")}&state=s1`);
+    const r = await t.get("/api/auth/callback?error=admin_policy_enforced&state=s1");
     expect(r.status).toBe(400);
     expect(r.headers["content-type"]).toMatch(/^text\/html/);
-    expect(r.text).toContain("Sign-in failed: &lt;b&gt;admin_policy_enforced&lt;/b&gt; <a href=\"/api/auth/login\">Try again</a>");
-    expect(r.text).not.toContain("<b>");
-    expect(warn).toHaveBeenCalledWith("Google sign-in failed: <b>admin_policy_enforced</b>");
+    expect(r.text).toContain('Sign-in failed: admin_policy_enforced <a href="/api/auth/login">Try again</a>');
+    expect(warn).toHaveBeenCalledWith("Google sign-in failed: admin_policy_enforced");
+    warn.mockRestore();
+  });
+
+  it("callback ?error that isn't a Google error code is neither shown nor logged (no spoofed text, no log injection)", async () => {
+    const t = await setup({ mode: "google" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const bad of ["<b>x</b>", "Your account is locked, call 555-0100", "a\nGoogle sign-in OK", "\u001b[2Kx"]) {
+      const r = await t.get(`/api/auth/callback?error=${encodeURIComponent(bad)}&state=s1`);
+      expect(r.status).toBe(400);
+      expect(r.text).toContain("Sign-in failed: unknown error <a");
+      expect(r.text).not.toContain("call 555");
+      expect(r.text).not.toContain("<b>");
+    }
+    for (const call of warn.mock.calls) expect(call).toEqual(["Google sign-in failed: unknown error"]);
+    expect(warn).toHaveBeenCalledTimes(4);
     warn.mockRestore();
   });
 

@@ -37,6 +37,44 @@ export function decodeRfc2047(s: string): string {
 /** One address without a display name or angle brackets. */
 export const BARE_ADDRESS = /^[^\s@<>"]+@[^\s@<>"]+$/;
 
+/** C0 controls and DEL: CR/LF would inject headers, the rest has no business in an unsubscribe email. */
+const CONTROL_CHAR = /[\x00-\x1f\x7f]/;
+
+/**
+ * Manual parse: `+` is literal in mailto, so URLSearchParams must not be used. The URI comes from a
+ * sender-controlled header (no DKIM gate applies to mailto), so it must name exactly one plain
+ * address: a list (`a@x,b@y`, `;`) would send mail from the user's account to people the confirm
+ * dialog never showed. Recipients in the query (`to=`, `cc=`, `bcc=`) are ignored.
+ */
+export function parseMailto(mailto: string): { to: string; subject: string; body: string } | null {
+  if (!/^mailto:/i.test(mailto)) return null;
+  const rest = mailto.slice("mailto:".length);
+  const q = rest.indexOf("?");
+  const rawTo = q === -1 ? rest : rest.slice(0, q);
+  const query = q === -1 ? "" : rest.slice(q + 1);
+  let to: string;
+  let subject = "";
+  let body = "";
+  try {
+    to = decodeURIComponent(rawTo);
+    for (const pair of query.split("&")) {
+      if (!pair) continue;
+      const eq = pair.indexOf("=");
+      const key = decodeURIComponent(eq === -1 ? pair : pair.slice(0, eq)).toLowerCase();
+      const value = eq === -1 ? "" : decodeURIComponent(pair.slice(eq + 1));
+      if (key === "subject") subject = value;
+      else if (key === "body") body = value;
+    }
+  } catch {
+    return null;
+  }
+  subject = subject || "unsubscribe";
+  body = body || "unsubscribe";
+  if ([to, subject, body].some((s) => CONTROL_CHAR.test(s))) return null;
+  if (/[,;]/.test(to) || !BARE_ADDRESS.test(to)) return null;
+  return { to, subject, body };
+}
+
 export function parseFrom(raw: string | undefined): { name: string; address: string } | null {
   if (!raw) return null;
   const s = raw.replace(/\s+/g, " ").trim();
@@ -69,7 +107,8 @@ export function parseListUnsubscribe(raw: string | undefined): { httpsUrl?: stri
     const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(uri)?.[1]?.toLowerCase();
     if (scheme === "https") httpsUrl ??= uri;
     else if (scheme === "http") httpUrl ??= uri;
-    else if (scheme === "mailto") mailto ??= uri;
+    // Only a mailto the unsubscribe step can actually send (one plain address) counts; try the next otherwise.
+    else if (scheme === "mailto" && !mailto && parseMailto(uri)) mailto = uri;
   }
   const out: { httpsUrl?: string; webUrl?: string; mailto?: string } = {};
   if (httpsUrl) out.httpsUrl = httpsUrl;

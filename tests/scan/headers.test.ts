@@ -72,6 +72,16 @@ describe("parseListUnsubscribe", () => {
   it("prefers https for webUrl", () => {
     expect(parseListUnsubscribe("<http://a.com/1>, <https://a.com/2>").webUrl).toBe("https://a.com/2");
   });
+  it("skips a mailto the unsubscribe step would refuse and keeps the first sendable one", () => {
+    expect(parseListUnsubscribe("<mailto:a@x.com,boss@victim.com>, <mailto:ok@x.com?subject=u>")).toEqual({
+      mailto: "mailto:ok@x.com?subject=u",
+    });
+    expect(parseListUnsubscribe("<mailto:a@x.com%0D%0ABcc:z@y.com>, <https://x.com/u>")).toEqual({
+      httpsUrl: "https://x.com/u",
+      webUrl: "https://x.com/u",
+    });
+    expect(parseListUnsubscribe("<mailto:not-an-address>")).toEqual({});
+  });
   it("ignores other schemes and garbage", () => {
     expect(parseListUnsubscribe("<ftp://x>")).toEqual({});
     expect(parseListUnsubscribe("garbage")).toEqual({});
@@ -162,6 +172,8 @@ describe("analyzeMessage", () => {
   });
   it("is manual for http-only", () => {
     expect(analyzeMessage(meta({ ...base, "list-unsubscribe": ["<http://acme.com/u>"] }))?.method).toBe("manual");
+    // A recipient-list mailto can't be sent, so the row must not promise "by email".
+    expect(analyzeMessage(meta({ ...base, "list-unsubscribe": ["<mailto:a@acme.com,b@other.com>, <http://acme.com/u>"] }))?.method).toBe("manual");
   });
   it("returns null without List-Unsubscribe", () => {
     expect(analyzeMessage(meta(base))).toBeNull();

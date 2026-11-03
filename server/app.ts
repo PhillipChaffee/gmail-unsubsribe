@@ -37,6 +37,7 @@ const DEMO_EMAIL = "demo@example.com";
 const CLEANUP_MODES: readonly string[] = ["leave", "archive", "trash"] satisfies CleanupMode[];
 const BAD_STATE_PAGE = 'Sign-in link expired or invalid. <a href="/">Try again</a>';
 const MAX_REASON = 200;
+const GOOGLE_ERROR_CODE = /^[a-z_]{1,64}$/;
 
 const isCleanupMode = (v: unknown): v is CleanupMode => typeof v === "string" && CLEANUP_MODES.includes(v);
 
@@ -207,7 +208,9 @@ export function createApp(deps: AppDeps): express.Express {
     // Google redirects with ?error= when the user cancels (access_denied) or the request was refused.
     if (error !== undefined) {
       if (error === "access_denied") return void sendSignInProblem(res, 400, "Sign-in was cancelled.");
-      const reason = (typeof error === "string" ? error : "unknown error").slice(0, MAX_REASON);
+      // The query is attacker-reachable (no state needed here): show and log only a Google-style error
+      // code, so another site can't put its own words on this origin or inject lines into the terminal.
+      const reason = typeof error === "string" && GOOGLE_ERROR_CODE.test(error) ? error : "unknown error";
       console.warn(`Google sign-in failed: ${reason}`);
       return void sendSignInProblem(res, 400, `Sign-in failed: ${reason}`);
     }
