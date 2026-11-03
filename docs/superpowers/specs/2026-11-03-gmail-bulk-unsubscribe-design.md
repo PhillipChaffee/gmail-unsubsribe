@@ -313,6 +313,17 @@ The senders in one job are processed with concurrency 4. For each sender:
    across all time, then `archive(ids)` or `trash(ids)`. Failures are recorded in
    `SenderResult.cleanup` and don't change the unsubscribe outcome. Failed senders are not
    cleaned up, so their mail stays and they can be retried.
+   - **Search-safety guard**: cleanup is skipped, with
+     `cleanup = {mode, ok:false, error:"sender address can't be searched safely"}`, for a sender
+     whose address isn't a single plain term inside `from:(...)` (it starts with `-`, contains
+     operators or parentheses, or its domain labels are invalid DNS labels). The address comes from
+     a sender-controlled header, and `from:(-x@y.com)` would otherwise match nearly the whole mailbox.
+   - **Exact-sender verification**: Gmail's `from:` search isn't guaranteed to be an exact
+     address match. Before archiving or trashing, the runner fetches each listed message's `From`
+     header (concurrency 8) and only modifies messages whose parsed address equals the sender.
+     Messages whose header can't be fetched are left in place. When there are any, the result is
+     `ok:false, error:"<N> emails couldn't be checked and were left in place"`. `count` is the
+     number actually modified.
 4. Update that sender's row in the server's in-memory scan (`status`, `lastAttempt`), append the
    `SenderResult` to the job, and increment progress. The client decides which rows to hide
    based on statuses *as loaded with the scan*, so rows changed during the session stay visible

@@ -508,6 +508,40 @@ Tasks in Wave B must not edit `package.json`, `shared/types.ts` or `server/gmail
 
 ---
 
+### Task 6b: Exact-sender verification before cleanup (controller ruling, added after Task 6)
+
+**Files:**
+- Modify: `server/unsub/runner.ts`
+- Test: `tests/unsub/runner.test.ts`
+
+**Interfaces:**
+- Consumes: `parseFrom` (Task 2, `server/scan/headers.ts`), `GmailClient.getMessageMetadata` (Task 1/3), `mapLimit`, `SCAN_CONCURRENCY` (Task 1), `AuthExpiredError`.
+- Produces: no new exports. The cleanup behavior follows spec §8 step 3, "Exact-sender verification".
+  - After `listMessageIds("from:(" + sender + ")")`, fetch each id's metadata with `mapLimit(ids, SCAN_CONCURRENCY, …)`.
+  - Keep only the ids whose `parseFrom(headers.from?.[0])?.address === sender`, and run `archive` or `trash` on those ids only.
+  - Ids whose metadata fetch rejects (other than `AuthExpiredError`) are left untouched and counted as `unchecked`. `AuthExpiredError` propagates after the pool settles, as in the scanner.
+  - Result:
+    - `unchecked === 0`: `{ mode, ok: true, count: modified }`.
+    - Otherwise: `{ mode, ok: false, count: modified, error: unchecked + " emails couldn't be checked and were left in place" }`.
+  - If no ids pass verification, call neither `archive` nor `trash`; the result is `count: 0`.
+  - The existing search-safety guard (SEARCHABLE_SENDER) stays and still runs first.
+
+- [ ] **Step 1: Write the failing tests** (`tests/unsub/runner.test.ts`):
+  - `cleanup skips lookalike messages returned by the from: search`
+    - Spy `listMessageIds` to also return the id of a message `From: Hot Deals <hotdeals@acme.com>` when cleaning `deals@acme.com`.
+    - With `trash`: only `deals@acme.com` messages gain `TRASH`, the lookalike keeps `INBOX`, and `cleanup.count` equals the number of true-sender messages.
+  - `cleanup leaves unverifiable messages in place and reports them`
+    - Put one true-sender id in `failMetadataFor`.
+    - That message is not trashed; `cleanup = {mode:"trash", ok:false, count:N-1, error:"1 emails couldn't be checked and were left in place"}`; the outcome is still `unsubscribed`.
+  - `AuthExpiredError during verification aborts the sender` (inject it via `failNext` on `getMessageMetadata`; `unsubscribeSender` rejects with `AuthExpiredError`)
+  - `archive path also verifies sender` (the lookalike keeps `INBOX`)
+- [ ] **Step 2: Run the tests to confirm they fail.** Run `npx vitest run tests/unsub/runner.test.ts`. Expected: the new tests FAIL.
+- [ ] **Step 3: Implement** in `server/unsub/runner.ts` per the Interfaces block. Keep the verification in a small named helper (e.g. `verifiedSenderIds`).
+- [ ] **Step 4: Run the tests.** Run `npm test && npm run typecheck`. Expected: PASS.
+- [ ] **Step 5: Commit**: `feat: verify exact sender before cleanup`.
+
+---
+
 ### Task 7: Google OAuth (`server/auth/google.ts`)
 
 **Files:**
